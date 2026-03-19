@@ -217,51 +217,63 @@ async def fetch_margin():
     print(f"[fetcher] 融資券 done ({trading_date}): 融資={margin_long} 融券={margin_short}")
 
 
+async def _get_finmind_futures_oi(futures_id: str, trade_date: str) -> dict:
+    """用 FinMind 取三大法人期貨未平倉量，回傳 {身份別: {long, short}}"""
+    import os
+    token = os.getenv("FINMIND_TOKEN", "")
+    url = "https://api.finmindtrade.com/api/v4/data"
+    params = {
+        "dataset": "TaiwanFuturesInstitutionalInvestors",
+        "data_id": futures_id,
+        "start_date": trade_date,
+        "token": token,
+    }
+    result = {}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+            body = await resp.json(content_type=None)
+            for row in body.get("data", []):
+                if row.get("date") == trade_date:
+                    name = row["institutional_investors"]
+                    result[name] = {
+                        "long": row.get("long_open_interest_balance_volume", 0),
+                        "short": row.get("short_open_interest_balance_volume", 0),
+                    }
+    return result
+
+
 async def fetch_futures_oi():
-    """抓台指期(TX)外資未平倉多空 & 小台(MTX)散戶未平倉多空"""
-    today = date.today()
+    """用 FinMind 抓台指期(TX)外資 & 小台(MTX)外資未平倉多空
+    自動嘗試今日 → 昨日 → 兩天前，找到有數據的最近交易日
+    """
+    from datetime import timedelta
 
-    # --- TX 外資 ---
-    tx_data = await _fetch_taifex_oi("TX", query_type=1)
-    foreign_key = next((k for k in tx_data if "外資" in k), None)
-    tx_foreign_long = tx_data[foreign_key]["long"] if foreign_key else 0
-    tx_foreign_short = tx_data[foreign_key]["short"] if foreign_key else 0
+    tx_data: dict = {}
+    trade_date: str = ""
+    for days_back in range(0, 5):
+        d = (date.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        tx_data = await _get_finmind_futures_oi("TX", d)
+        if tx_data.get("外資", {}).get("long", 0) or tx_data.get("外資", {}).get("short", 0):
+            trade_date = d
+            break
 
-    # --- MTX 散戶 = 全市場 - 三大法人 ---
-    # queryType=1 → 三大法人明細（可能含「合計」列）
-    mtx_inst = await _fetch_taifex_oi("MTX", query_type=1)
+    if not trade_date:
+        print("[fetcher] 期貨OI: FinMind 近 5 日查無數據，跳過寫入")
+        return
 
-    # 嘗試從 queryType=2 取全市場（自然人專屬 CSV）
-    mtx_natural = await _fetch_taifex_oi("MTX", query_type=2)
-    natural_key = next((k for k in mtx_natural if "自然人" in k or "散戶" in k), None)
+    tx_foreign = tx_data.get("外資", {})
+    tx_foreign_long = tx_foreign.get("long", 0)
+    tx_foreign_short = tx_foreign.get("short", 0)
 
-    if natural_key:
-        # TAIFEX 直接提供自然人資料
-        mtx_retail_long = mtx_natural[natural_key]["long"]
-        mtx_retail_short = mtx_natural[natural_key]["short"]
-    else:
-        # Fallback：用「合計」減法人，估算散戶
-        total_key = next((k for k in mtx_inst if "合計" in k or "全市場" in k), None)
-        if total_key:
-            total_long = mtx_inst[total_key]["long"]
-            total_short = mtx_inst[total_key]["short"]
-            inst_long = sum(
-                mtx_inst.get(k, {}).get("long", 0)
-                for k in ["自營商", "投信"] + ([foreign_key] if foreign_key else [])
-                if k in mtx_inst
-            )
-            inst_short = sum(
-                mtx_inst.get(k, {}).get("short", 0)
-                for k in ["自營商", "投信"] + ([foreign_key] if foreign_key else [])
-                if k in mtx_inst
-            )
-            mtx_retail_long = max(0, total_long - inst_long)
-            mtx_retail_short = max(0, total_short - inst_short)
-        else:
-            mtx_retail_long = mtx_retail_short = 0
+    # --- MTX 外資（同一交易日）---
+    mtx_data = await _get_finmind_futures_oi("MTX", trade_date)
+    mtx_foreign = mtx_data.get("外資", {})
+    mtx_retail_long = mtx_foreign.get("long", 0)
+    mtx_retail_short = mtx_foreign.get("short", 0)
 
+    db_date = datetime.strptime(trade_date, "%Y-%m-%d").date()
     with SessionLocal() as db:
-        _upsert_chip(db, today, "0000",
+        _upsert_chip(db, db_date, "0000",
                      tx_foreign_long=tx_foreign_long,
                      tx_foreign_short=tx_foreign_short,
                      mtx_retail_long=mtx_retail_long,
@@ -269,7 +281,7 @@ async def fetch_futures_oi():
         db.commit()
 
     print(
-        f"[fetcher] 期貨OI done: "
+        f"[fetcher] 期貨OI done ({trade_date}): "
         f"外資TX 多{tx_foreign_long}/空{tx_foreign_short}, "
-        f"散戶MTX 多{mtx_retail_long}/空{mtx_retail_short}"
+        f"外資MTX 多{mtx_retail_long}/空{mtx_retail_short}"
     )

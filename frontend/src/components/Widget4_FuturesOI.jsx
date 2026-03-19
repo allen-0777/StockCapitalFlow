@@ -17,7 +17,7 @@ export default function Widget4_FuturesOI({ data }) {
       pct: tx_foreign_bull_pct,
     },
     {
-      label: '散戶未平倉多空比',
+      label: '外資小台未平倉多空比',
       sublabel: '小台指 (MTX)',
       pct: mtx_retail_bull_pct,
     },
