@@ -61,7 +61,7 @@ jobs:
         run: |
           echo "Triggering job: $JOB_NAME"
           MAX_RETRIES=3
-          WAIT_SEC=600
+          WAIT_SEC=180
 
           for i in $(seq 1 $MAX_RETRIES); do
             echo "--- Attempt $i / $MAX_RETRIES ---"
