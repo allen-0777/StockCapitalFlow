@@ -30,7 +30,7 @@ function SumRow({ rows }) {
   const col = v => v > 0 ? 'text-red-500' : v < 0 ? 'text-emerald-500' : 'text-slate-400'
   return (
     <tr className="border-t-2 border-slate-200 bg-slate-50/60">
-      <td className="text-xs text-slate-500 font-semibold py-2 px-2">合計</td>
+      <td className="text-xs text-slate-500 font-semibold py-2 px-2">近10日合計</td>
       <td className={`text-right tabular-nums text-sm py-2 px-2 font-semibold ${col(fz)}`}>{fmtZhang(fz)}</td>
       <td className={`text-right tabular-nums text-sm py-2 px-2 font-semibold ${col(tz)}`}>{fmtZhang(tz)}</td>
       <td className={`text-right tabular-nums text-sm py-2 px-2 font-semibold ${col(dz)}`}>{fmtZhang(dz)}</td>
@@ -91,6 +91,7 @@ function ShareholdingChart({ data }) {
         <span className={`text-sm font-semibold mb-1 ${isUp ? 'text-red-500' : 'text-emerald-500'}`}>
           {isUp ? '▲' : '▼'} {Math.abs(diff)}%
         </span>
+        <span className="text-[10px] text-slate-400 mb-1">較昨日</span>
         <span className="text-xs text-slate-400 mb-1 ml-auto">{data[data.length-1].date}</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 60 }}>
@@ -176,8 +177,8 @@ export default function Widget_Concentration() {
           <Users size={18} className="text-white" />
         </div>
         <div>
-          <div className="font-bold text-slate-700 text-base">籌碼集中度</div>
-          <div className="text-xs text-slate-400">法人動向 · 外資持股比例</div>
+          <div className="font-bold text-slate-700 text-base">三大法人動向與持股</div>
+          <div className="text-xs text-slate-400">三大法人買賣超 · 外資持股比例</div>
         </div>
         <div className="ml-auto relative flex items-center gap-2 bg-white/70 border border-white/80 rounded-2xl px-3 py-1.5 shadow-sm">
           <Search size={14} className="text-slate-400 shrink-0" />

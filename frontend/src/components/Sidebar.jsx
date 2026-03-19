@@ -6,7 +6,7 @@ const tabs = [
   { id: 'overview', icon: <Activity size={20} />, label: '大盤總覽' },
   { id: 'institutional', icon: <Layers size={20} />, label: '法人進出' },
   { id: 'broker', icon: <Building2 size={20} />, label: '分點進出' },
-  { id: 'concentration', icon: <PieChart size={20} />, label: '籌碼集中度' },
+  { id: 'concentration', icon: <PieChart size={20} />, label: '法人持股' },
 ]
 
 export default function Sidebar() {
