@@ -104,7 +104,7 @@ async def fetch_institutional_market():
 
 
 async def fetch_institutional_stocks():
-    """抓個股三大法人買賣超"""
+    """抓個股三大法人買賣超（bulk upsert，避免逐筆 SQL）"""
     data = await _get_json_with_retry(f"{TWSE_BASE}/fund/T86?response=json&selectType=ALL")
     trading_date = _parse_twse_date(data)
 
@@ -112,31 +112,42 @@ async def fetch_institutional_stocks():
         print(f"[fetcher] T86 stat={data.get('stat')}, skipping")
         return
 
-    # fields: 證券代號, 證券名稱, 外陸資買進, 外陸資賣出, 外陸資買賣超, 外資自營買進, 外資自營賣出, 外資自營買賣超,
-    #         投信買進, 投信賣出, 投信買賣超, 自營買賣超, 自營買進, 自營賣出, 三大法人買賣超
     rows_data = data.get("data", [])
+    stock_params = []
+    chip_params = []
+
+    for row in rows_data:
+        stock_id = row[0].strip()
+        if not stock_id:
+            continue
+        try:
+            stock_params.append({"s": stock_id, "n": row[1].strip()})
+            chip_params.append({
+                "date": trading_date, "stock_id": stock_id,
+                "foreign_buy": round(_parse_num(row[4]) / 1000, 4),
+                "trust_buy":   round(_parse_num(row[10]) / 1000, 4),
+                "dealer_buy":  round(_parse_num(row[11]) / 1000, 4),
+            })
+        except IndexError:
+            continue
+
     with SessionLocal() as db:
-        for row in rows_data:
-            stock_id = row[0].strip()
-            if not stock_id:
-                continue
-            try:
-                stock_name = row[1].strip()
-                foreign_net = _parse_num(row[4]) / 1000
-                trust_net = _parse_num(row[10]) / 1000
-                dealer_net = _parse_num(row[11]) / 1000
-            except IndexError:
-                continue
-            # upsert 股票名稱
-            exists = db.execute(text("SELECT stock_id FROM stocks WHERE stock_id=:s"), {"s": stock_id}).fetchone()
-            if exists:
-                db.execute(text("UPDATE stocks SET name=:n WHERE stock_id=:s"), {"n": stock_name, "s": stock_id})
-            else:
-                db.execute(text("INSERT INTO stocks (stock_id, name) VALUES (:s, :n)"), {"s": stock_id, "n": stock_name})
-            _upsert_chip(db, trading_date, stock_id,
-                         foreign_buy=round(foreign_net, 4),
-                         trust_buy=round(trust_net, 4),
-                         dealer_buy=round(dealer_net, 4))
+        if stock_params:
+            db.execute(
+                text("INSERT INTO stocks (stock_id, name) VALUES (:s, :n) "
+                     "ON CONFLICT (stock_id) DO UPDATE SET name = EXCLUDED.name"),
+                stock_params
+            )
+        if chip_params:
+            db.execute(
+                text("INSERT INTO daily_chips (date, stock_id, foreign_buy, trust_buy, dealer_buy) "
+                     "VALUES (:date, :stock_id, :foreign_buy, :trust_buy, :dealer_buy) "
+                     "ON CONFLICT (date, stock_id) DO UPDATE SET "
+                     "foreign_buy = EXCLUDED.foreign_buy, "
+                     "trust_buy   = EXCLUDED.trust_buy, "
+                     "dealer_buy  = EXCLUDED.dealer_buy"),
+                chip_params
+            )
         db.commit()
 
     print(f"[fetcher] 個股法人 done ({trading_date}): {len(rows_data)} 筆")
