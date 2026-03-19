@@ -1,0 +1,79 @@
+name: Daily Market Data Fetch
+
+on:
+  schedule:
+    # 台灣時間（UTC+8）→ UTC
+    - cron: '0 9 * * 1-5'    # 17:00 CST — 法人買賣超
+    - cron: '30 9 * * 1-5'   # 17:30 CST — 期貨OI + 選擇權
+    - cron: '45 9 * * 1-5'   # 17:45 CST — 融資券
+  workflow_dispatch:          # 允許手動觸發（測試用）
+    inputs:
+      job:
+        description: 'Job to run (institutional / futures / margin)'
+        required: true
+        default: 'institutional'
+        type: choice
+        options: [institutional, futures, margin]
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Determine job name
+        id: job
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            JOB_NAME="${{ github.event.inputs.job }}"
+          else
+            MINUTE=$(date -u +%M)
+            if [ "$MINUTE" = "00" ]; then
+              JOB_NAME="institutional"
+            elif [ "$MINUTE" = "30" ]; then
+              JOB_NAME="futures"
+            else
+              JOB_NAME="margin"
+            fi
+          fi
+          echo "name=$JOB_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger fetch with retry
+        env:
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+          JOB_NAME: ${{ steps.job.outputs.name }}
+        run: |
+          echo "Triggering job: $JOB_NAME"
+          MAX_RETRIES=3
+          WAIT_SEC=600
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "--- Attempt $i / $MAX_RETRIES ---"
+            RESPONSE=$(curl -s --max-time 120 -X POST \
+              "$BACKEND_URL/api/v1/admin/trigger/$JOB_NAME?secret=$TRIGGER_SECRET")
+            echo "Response: $RESPONSE"
+
+            STATUS=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(d.get('status','error'))" 2>/dev/null || echo "error")
+            DATE_MATCH=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(d.get('date_match','false'))" 2>/dev/null || echo "false")
+
+            if [ "$STATUS" = "skipped" ]; then
+              echo "Today is not a trading day. Skipping."
+              exit 0
+            fi
+
+            if [ "$STATUS" = "ok" ] && [ "$DATE_MATCH" = "True" ]; then
+              echo "Success! Data date matches expected."
+              exit 0
+            fi
+
+            if [ $i -lt $MAX_RETRIES ]; then
+              echo "Data not yet updated. Waiting 10 minutes before retry..."
+              sleep $WAIT_SEC
+            fi
+          done
+
+          echo "Retries exhausted. Using latest available data."
+          exit 0

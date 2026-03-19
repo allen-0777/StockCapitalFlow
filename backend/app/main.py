@@ -1,26 +1,35 @@
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.models.database import init_db
-from app.services.scheduler import start_scheduler
-from app.api import health, market, stocks, watchlist, institutional, broker, concentration
+from app.api import health, market, stocks, watchlist, institutional, broker, concentration, admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    scheduler = start_scheduler()
+    # APScheduler：本機或付費雲端主機才啟動（免費 Render 靠 GitHub Actions 觸發）
+    scheduler = None
+    if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":
+        from app.services.scheduler import start_scheduler
+        scheduler = start_scheduler()
     yield
-    scheduler.shutdown()
+    if scheduler:
+        scheduler.shutdown()
 
 
 app = FastAPI(title="LiquidChip API", lifespan=lifespan)
 
+# CORS：本機 + 生產環境 Vercel 網域
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+allowed_origins = [o.strip() for o in _raw_origins.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,3 +42,4 @@ app.include_router(watchlist.router)
 app.include_router(institutional.router)
 app.include_router(broker.router)
 app.include_router(concentration.router)
+app.include_router(admin.router)

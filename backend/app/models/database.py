@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine, Column, String, Date, Numeric, Integer, ForeignKey, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
-from sqlalchemy.dialects.sqlite import insert
 from datetime import datetime
 import os
 
@@ -25,10 +24,22 @@ def cache_set(key: str, value):
 def cache_clear():
     _cache.clear()
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'data.db')}"
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# ---------------------------------------------------------------------------
+# Database connection — SQLite (local dev) or PostgreSQL (production)
+# ---------------------------------------------------------------------------
+_db_url = os.getenv("DATABASE_URL")
+if _db_url:
+    # Render / Supabase 可能給 postgres:// 舊格式，SQLAlchemy 需要 postgresql://
+    if _db_url.startswith("postgres://"):
+        _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL = _db_url
+    engine = create_engine(DATABASE_URL)
+else:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'data.db')}"
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

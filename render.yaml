@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: liquidchip-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false          # 在 Render Dashboard 填入 Supabase 連線字串
+      - key: FINMIND_TOKEN
+        sync: false          # FinMind API Token
+      - key: TRIGGER_SECRET
+        sync: false          # GitHub Actions 觸發用的密鑰（自訂隨機字串）
+      - key: ALLOWED_ORIGINS
+        sync: false          # Vercel 網域，例如 https://liquidchip.vercel.app
+      - key: ENABLE_SCHEDULER
+        value: "false"       # 免費方案用 GitHub Actions，不啟動 APScheduler

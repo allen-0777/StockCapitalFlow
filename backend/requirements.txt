@@ -6,3 +6,4 @@ pandas
 apscheduler
 python-dotenv
 exchange-calendars
+psycopg2-binary
