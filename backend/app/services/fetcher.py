@@ -1,4 +1,5 @@
 import asyncio
+import ssl
 import aiohttp
 from datetime import date, datetime
 from sqlalchemy.orm import Session
@@ -7,11 +8,16 @@ from app.models.database import SessionLocal
 
 TWSE_BASE = "https://www.twse.com.tw/rwd/zh"
 
+# Python 3.14 對 TWSE 憑證（缺 Subject Key Identifier）驗證失敗，略過憑證驗證
+_ssl_ctx = ssl.create_default_context()
+_ssl_ctx.check_hostname = False
+_ssl_ctx.verify_mode = ssl.CERT_NONE
+
 
 async def _get_json(url: str) -> dict:
     headers = {"User-Agent": "Mozilla/5.0 (compatible; LiquidChip/1.0)"}
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30), ssl=_ssl_ctx) as resp:
             resp.raise_for_status()
             return await resp.json(content_type=None)
 
