@@ -38,6 +38,21 @@ jobs:
           fi
           echo "name=$JOB_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Wake up Render backend
+        env:
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+        run: |
+          echo "Warming up backend..."
+          for j in $(seq 1 12); do
+            STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_URL/api/v1/health")
+            if [ "$STATUS_CODE" = "200" ]; then
+              echo "Backend is awake (attempt $j)"
+              break
+            fi
+            echo "Waiting... attempt $j/12 (status: $STATUS_CODE)"
+            sleep 10
+          done
+
       - name: Trigger fetch with retry
         env:
           BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
