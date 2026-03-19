@@ -12,13 +12,13 @@ export default function Widget4_FuturesOI({ data }) {
 
   const items = [
     {
-      label: '外資未平倉多空比',
-      sublabel: '台指期 (TX)',
+      label: '外資大台未平倉多空比',
+      sublabel: '台指期 (TX)｜外資部位',
       pct: tx_foreign_bull_pct,
     },
     {
       label: '外資小台未平倉多空比',
-      sublabel: '小台指 (MTX)',
+      sublabel: '小台指 (MTX)｜外資部位',
       pct: mtx_retail_bull_pct,
     },
   ]
@@ -26,7 +26,7 @@ export default function Widget4_FuturesOI({ data }) {
   return (
     <div className="md:col-span-2 lg:col-span-3 glass-card rounded-[2rem] p-6">
       <div className="mb-5">
-        <h2 className="text-lg font-bold text-slate-800">期貨籌碼多空比</h2>
+        <h2 className="text-lg font-bold text-slate-800">外資期貨雙指標動向</h2>
         <p className="text-xs text-slate-400 mt-0.5">{date} 盤後資料</p>
       </div>
 
