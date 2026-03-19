@@ -65,7 +65,8 @@ def market_summary(db: Session = Depends(get_db)):
     futures_rows = db.execute(
         text("""
             SELECT date, tx_foreign_long, tx_foreign_short,
-                   mtx_retail_long, mtx_retail_short
+                   mtx_retail_long, mtx_retail_short,
+                   trust_tx_long, trust_tx_short
             FROM daily_chips
             WHERE stock_id = '0000'
               AND tx_foreign_long IS NOT NULL
