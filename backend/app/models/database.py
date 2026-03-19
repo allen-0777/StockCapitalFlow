@@ -127,7 +127,7 @@ def init_db():
                 db.execute(text(f"ALTER TABLE daily_chips ADD COLUMN {col}"))
                 db.commit()
             except Exception:
-                pass
+                db.rollback()  # PostgreSQL: 失敗後必須 rollback 才能繼續
         # 補 Index（IF NOT EXISTS 避免重複）
         db.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_chips_stock_date ON daily_chips(stock_id, date DESC)"
