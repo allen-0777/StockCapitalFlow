@@ -6,58 +6,6 @@ from sqlalchemy import text
 from app.models.database import SessionLocal
 
 TWSE_BASE = "https://www.twse.com.tw/rwd/zh"
-TAIFEX_BASE = "https://www.taifex.com.tw/cht/3"
-
-
-async def _get_taifex_csv(url: str) -> str:
-    """抓 TAIFEX CSV（big5 編碼）"""
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; LiquidChip/1.0)"}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            resp.raise_for_status()
-            raw = await resp.read()
-            return raw.decode("cp950", errors="replace")
-
-
-def _parse_taifex_oi(text: str) -> dict:
-    """
-    解析 TAIFEX 期貨未平倉 CSV → {身份別: {long: int, short: int}}
-    欄位順序（0-indexed）：
-      0:日期, 1:商品, 2:身份別,
-      3:多方交易口數, 4:多方金額, 5:空方交易口數, 6:空方金額,
-      7:淨額口數, 8:淨額金額,
-      9:多方未平倉口數, 10:多方未平倉金額,
-      11:空方未平倉口數, 12:空方未平倉金額,
-      13:淨額未平倉口數, 14:淨額未平倉金額
-    """
-    result = {}
-    for line in text.splitlines():
-        parts = [p.strip().strip('"') for p in line.split(",")]
-        if len(parts) < 12:
-            continue
-        # 資料列：第一欄含 "/"（日期格式 yyyy/mm/dd）
-        if "/" not in parts[0]:
-            continue
-        identity = parts[2]
-        if not identity:
-            continue
-        try:
-            long_oi = int(parts[9].replace(",", "") or "0")
-            short_oi = int(parts[11].replace(",", "") or "0")
-            result[identity] = {"long": long_oi, "short": short_oi}
-        except (ValueError, IndexError):
-            continue
-    return result
-
-
-async def _fetch_taifex_oi(commodity_id: str, query_type: int = 1) -> dict:
-    url = (
-        f"{TAIFEX_BASE}/futContractsDateDown"
-        f"?queryType={query_type}&marketCode=0&dateaddcnt=0"
-        f"&commodity_id={commodity_id}&seqno=&dutch=1"
-    )
-    text = await _get_taifex_csv(url)
-    return _parse_taifex_oi(text)
 
 
 async def _get_json(url: str) -> dict:
