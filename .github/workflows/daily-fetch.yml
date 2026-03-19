@@ -50,7 +50,7 @@ jobs:
 
           for i in $(seq 1 $MAX_RETRIES); do
             echo "--- Attempt $i / $MAX_RETRIES ---"
-            RESPONSE=$(curl -s --max-time 120 -X POST \
+            RESPONSE=$(curl -s --max-time 300 -X POST \
               "$BACKEND_URL/api/v1/admin/trigger/$JOB_NAME?secret=$TRIGGER_SECRET")
             echo "Response: $RESPONSE"
 
