@@ -44,7 +44,7 @@ jobs:
         run: |
           echo "Warming up backend..."
           for j in $(seq 1 12); do
-            STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$BACKEND_URL/api/v1/health")
+            STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$BACKEND_URL/api/v1/health") || STATUS_CODE="000"
             if [ "$STATUS_CODE" = "200" ]; then
               echo "Backend is awake (attempt $j)"
               break
@@ -66,7 +66,7 @@ jobs:
           for i in $(seq 1 $MAX_RETRIES); do
             echo "--- Attempt $i / $MAX_RETRIES ---"
             RESPONSE=$(curl -s --max-time 300 -X POST \
-              "$BACKEND_URL/api/v1/admin/trigger/$JOB_NAME?secret=$TRIGGER_SECRET")
+              "$BACKEND_URL/api/v1/admin/trigger/$JOB_NAME?secret=$TRIGGER_SECRET") || RESPONSE="{}"
             echo "Response: $RESPONSE"
 
             STATUS=$(echo "$RESPONSE" | python3 -c \
