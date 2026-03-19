@@ -55,18 +55,20 @@ def market_summary(db: Session = Depends(get_db)):
         """)
     ).fetchone()
 
-    # 期貨未平倉資料：取有 tx_foreign_long 的最新一筆
-    futures_row = db.execute(
+    # 期貨未平倉資料：取最近 5 日（含歷史，用於 Sparkline + 趨勢）
+    futures_rows = db.execute(
         text("""
             SELECT date, tx_foreign_long, tx_foreign_short,
                    mtx_retail_long, mtx_retail_short
             FROM daily_chips
             WHERE stock_id = '0000'
               AND tx_foreign_long IS NOT NULL
+              AND (tx_foreign_long > 0 OR tx_foreign_short > 0)
             ORDER BY date DESC
-            LIMIT 1
+            LIMIT 5
         """)
-    ).fetchone()
+    ).fetchall()
+    futures_row = futures_rows[0] if futures_rows else None
 
     if not inst_row and not margin_row:
         raise HTTPException(status_code=404, detail="尚無大盤籌碼資料，請等待每日排程執行")
@@ -93,6 +95,13 @@ def market_summary(db: Session = Depends(get_db)):
         "margin_date": str(margin_row.date) if margin_row else None,
         "futures_oi": _build_futures_oi(futures_row),
         "futures_oi_date": str(futures_row.date) if futures_row else None,
+        "futures_oi_history": [
+            {
+                "date": str(r.date),
+                **(_build_futures_oi(r) or {}),
+            }
+            for r in reversed(futures_rows)   # 舊→新，方便前端畫趨勢線
+        ],
     }
     cache_set("market_summary", result)
     return result
