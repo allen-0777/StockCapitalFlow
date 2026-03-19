@@ -44,7 +44,7 @@ jobs:
         run: |
           echo "Warming up backend..."
           for j in $(seq 1 12); do
-            STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_URL/api/v1/health")
+            STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$BACKEND_URL/api/v1/health")
             if [ "$STATUS_CODE" = "200" ]; then
               echo "Backend is awake (attempt $j)"
               break
