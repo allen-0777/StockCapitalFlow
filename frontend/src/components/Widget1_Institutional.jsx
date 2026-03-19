@@ -3,7 +3,7 @@ import { TrendingUp, TrendingDown } from 'lucide-react'
 export default function Widget1_Institutional({ data }) {
   if (!data) {
     return (
-      <div className="lg:col-span-3 glass-card rounded-[2rem] p-6 flex items-center justify-center h-48">
+      <div className="md:col-span-2 lg:col-span-3 glass-card rounded-[2rem] p-6 flex items-center justify-center h-48">
         <p className="text-slate-400 text-sm">載入中... 若首次使用請等待每日 16:30 排程執行，或手動觸發爬蟲。</p>
       </div>
     )
@@ -16,8 +16,10 @@ export default function Widget1_Institutional({ data }) {
   ]
 
   return (
-    <div className="lg:col-span-3 glass-card rounded-[2rem] p-6 relative overflow-hidden group">
-      <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-white/40 to-transparent rounded-full -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
+    <div className="md:col-span-2 lg:col-span-3 glass-card rounded-[2rem] p-6 relative group">
+      <div className="absolute inset-0 overflow-hidden rounded-[2rem] pointer-events-none">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-white/40 to-transparent rounded-full -translate-y-1/2 translate-x-1/2"></div>
+      </div>
 
       <div className="flex justify-between items-end mb-8">
         <div>

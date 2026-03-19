@@ -1,7 +1,8 @@
 import os
 import aiohttp
+from collections import defaultdict
 from datetime import date, timedelta
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
 
@@ -15,15 +16,22 @@ def _token() -> str:
 async def _get_finmind(dataset: str, data_id: str, start_date: str) -> list:
     params = {"dataset": dataset, "data_id": data_id, "start_date": start_date}
     headers = {"Authorization": f"Bearer {_token()}"}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            FINMIND_URL, params=params, headers=headers,
-            timeout=aiohttp.ClientTimeout(total=30)
-        ) as resp:
-            body = await resp.json(content_type=None)
-            if body.get("status") != 200:
-                return []
-            return body.get("data", [])
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                FINMIND_URL, params=params, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                if resp.status == 402:
+                    raise HTTPException(status_code=503, detail="FinMind API 配額已耗盡，請明日再試")
+                body = await resp.json(content_type=None)
+                if body.get("status") != 200:
+                    return []
+                return body.get("data", [])
+    except HTTPException:
+        raise
+    except (aiohttp.ClientError, TimeoutError) as e:
+        raise HTTPException(status_code=503, detail=f"FinMind API 暫時無法連線: {e}")
 
 
 @router.get("/api/v1/stocks/{stock_id}/concentration")
@@ -34,7 +42,6 @@ async def get_concentration(stock_id: str, days: int = 60):
     shareholding_rows = await _get_shareholding(stock_id, start_date)
 
     # 整理法人買賣超：按日期聚合
-    from collections import defaultdict
     daily = defaultdict(lambda: {"foreign": 0, "trust": 0, "dealer": 0})
     name_map = {
         "Foreign_Investor": "foreign",

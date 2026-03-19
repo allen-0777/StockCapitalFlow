@@ -1,4 +1,5 @@
 import aiohttp
+from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -7,16 +8,21 @@ from app.models.database import get_db
 router = APIRouter()
 
 _stock_cache: list = []
+_stock_cache_ts: datetime | None = None
+_STOCK_CACHE_TTL = 86400  # 24 hours
+
 
 async def _fetch_stock_list() -> list:
-    global _stock_cache
-    if _stock_cache:
+    global _stock_cache, _stock_cache_ts
+    now = datetime.now()
+    if _stock_cache and _stock_cache_ts and (now - _stock_cache_ts).total_seconds() < _STOCK_CACHE_TTL:
         return _stock_cache
     url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     async with aiohttp.ClientSession() as session:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             data = await resp.json(content_type=None)
             _stock_cache = [{"code": r["Code"], "name": r["Name"]} for r in data if r.get("Code")]
+            _stock_cache_ts = now
     return _stock_cache
 
 

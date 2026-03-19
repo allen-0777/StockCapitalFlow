@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from app.models.database import get_db
+from app.models.database import get_db, cache_get, cache_set
 
 router = APIRouter()
 
@@ -13,6 +13,11 @@ def institutional_ranking(
     limit: int = Query(default=20, ge=5, le=100),
     db: Session = Depends(get_db),
 ):
+    cache_key = f"ranking:{type}:{order}:{limit}"
+    cached = cache_get(cache_key, ttl_seconds=3600)
+    if cached is not None:
+        return cached
+
     col_map = {
         "foreign": "foreign_buy",
         "trust": "trust_buy",
@@ -22,6 +27,14 @@ def institutional_ranking(
     col = col_map[type]
     direction = "DESC" if order == "buy" else "ASC"
 
+    # Pre-fetch max_date to avoid correlated subquery full-table scan
+    max_date = db.execute(
+        text("SELECT MAX(date) FROM daily_chips WHERE stock_id != '0000' AND foreign_buy IS NOT NULL")
+    ).scalar()
+
+    if not max_date:
+        return []
+
     rows = db.execute(
         text(f"""
             SELECT c.stock_id, COALESCE(s.name, c.stock_id) AS name,
@@ -30,15 +43,15 @@ def institutional_ranking(
             FROM daily_chips c
             LEFT JOIN stocks s ON c.stock_id = s.stock_id
             WHERE c.stock_id != '0000'
-              AND c.date = (SELECT MAX(date) FROM daily_chips WHERE stock_id != '0000')
+              AND c.date = :max_date
               AND {col} IS NOT NULL
             ORDER BY {col} {direction}
             LIMIT :limit
         """),
-        {"limit": limit},
+        {"max_date": max_date, "limit": limit},
     ).fetchall()
 
-    return [
+    result = [
         {
             "stock_id": r.stock_id,
             "name": r.name,
@@ -49,3 +62,5 @@ def institutional_ranking(
         }
         for r in rows
     ]
+    cache_set(cache_key, result)
+    return result

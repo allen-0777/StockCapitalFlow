@@ -8,6 +8,7 @@ import Widget_InstitutionalRanking from './components/Widget_InstitutionalRankin
 import Widget_InstitutionalSummary from './components/Widget_InstitutionalSummary'
 import Widget_BrokerFlow from './components/Widget_BrokerFlow'
 import Widget_Concentration from './components/Widget_Concentration'
+import Widget4_FuturesOI from './components/Widget4_FuturesOI'
 import useStore from './store/useStore'
 
 export default function App() {
@@ -65,6 +66,7 @@ export default function App() {
                 <Widget1_Institutional data={marketData} />
                 <Widget2_Watchlist watchlist={watchlist} onRefresh={fetchWatchlist} />
                 <Widget3_LiquidGauge data={marketData} />
+                <Widget4_FuturesOI data={marketData} />
               </>
             )}
             {activeTab === 'institutional' && (

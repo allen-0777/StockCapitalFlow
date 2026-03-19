@@ -1,7 +1,29 @@
 from sqlalchemy import create_engine, Column, String, Date, Numeric, Integer, ForeignKey, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.dialects.sqlite import insert
+from datetime import datetime
 import os
+
+# ---------------------------------------------------------------------------
+# In-memory TTL cache (no Redis required)
+# ---------------------------------------------------------------------------
+_cache: dict = {}
+
+
+def cache_get(key: str, ttl_seconds: int):
+    if key in _cache:
+        value, ts = _cache[key]
+        if (datetime.now() - ts).total_seconds() < ttl_seconds:
+            return value
+    return None
+
+
+def cache_set(key: str, value):
+    _cache[key] = (value, datetime.now())
+
+
+def cache_clear():
+    _cache.clear()
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'data.db')}"
@@ -40,6 +62,10 @@ class DailyChip(Base):
     dealer_buy = Column(Numeric, nullable=True)
     margin_long = Column(Integer, nullable=True)
     margin_short = Column(Integer, nullable=True)
+    tx_foreign_long = Column(Integer, nullable=True)   # 台指期外資多方未平倉口數
+    tx_foreign_short = Column(Integer, nullable=True)  # 台指期外資空方未平倉口數
+    mtx_retail_long = Column(Integer, nullable=True)   # 小台散戶多方未平倉口數
+    mtx_retail_short = Column(Integer, nullable=True)  # 小台散戶空方未平倉口數
 
 
 class BrokerDaily(Base):
@@ -67,6 +93,25 @@ def init_db():
         if existing == 0:
             db.execute(text("INSERT INTO users (id, username) VALUES (1, 'default')"))
             db.commit()
+        # 向舊資料庫補欄位（ALTER TABLE 對已存在欄位會拋例外，直接忽略）
+        for col in ["tx_foreign_long INTEGER", "tx_foreign_short INTEGER",
+                    "mtx_retail_long INTEGER", "mtx_retail_short INTEGER"]:
+            try:
+                db.execute(text(f"ALTER TABLE daily_chips ADD COLUMN {col}"))
+                db.commit()
+            except Exception:
+                pass
+        # 補 Index（IF NOT EXISTS 避免重複）
+        db.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_chips_stock_date ON daily_chips(stock_id, date DESC)"
+        ))
+        db.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_watchlists_user ON watchlists(user_id)"
+        ))
+        db.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_broker_stock_date ON broker_daily(stock_id, date DESC)"
+        ))
+        db.commit()
 
 
 def get_db():

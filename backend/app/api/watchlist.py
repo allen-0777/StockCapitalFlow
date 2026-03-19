@@ -13,38 +13,39 @@ class WatchlistAdd(BaseModel):
 
 @router.get("/api/v1/users/{user_id}/watchlist")
 def get_watchlist(user_id: int, db: Session = Depends(get_db)):
-    stocks = db.execute(
-        text("SELECT stock_id FROM watchlists WHERE user_id = :uid"),
+    rows = db.execute(
+        text("""
+            SELECT w.stock_id,
+                   COALESCE(s.name, w.stock_id) AS name,
+                   c.date,
+                   c.foreign_buy,
+                   c.trust_buy,
+                   c.dealer_buy
+            FROM watchlists w
+            LEFT JOIN stocks s ON w.stock_id = s.stock_id
+            LEFT JOIN daily_chips c
+                ON c.stock_id = w.stock_id
+               AND c.date = (
+                   SELECT MAX(c2.date) FROM daily_chips c2
+                   WHERE c2.stock_id = w.stock_id
+                     AND c2.foreign_buy IS NOT NULL
+               )
+            WHERE w.user_id = :uid
+        """),
         {"uid": user_id}
     ).fetchall()
 
-    result = []
-    for s in stocks:
-        sid = s.stock_id
-        row = db.execute(
-            text("""
-                SELECT c.date, c.foreign_buy, c.trust_buy, c.dealer_buy,
-                       COALESCE(st.name, c.stock_id) AS name
-                FROM daily_chips c
-                LEFT JOIN stocks st ON c.stock_id = st.stock_id
-                WHERE c.stock_id = :sid
-                ORDER BY c.date DESC
-                LIMIT 1
-            """),
-            {"sid": sid}
-        ).fetchone()
-
-        entry = {
-            "stock_id": sid,
-            "name": row.name if row else sid,
-            "foreign_buy": float(row.foreign_buy or 0) if row else 0,
-            "trust_buy": float(row.trust_buy or 0) if row else 0,
-            "dealer_buy": float(row.dealer_buy or 0) if row else 0,
-            "date": str(row.date) if row else None,
+    return [
+        {
+            "stock_id": r.stock_id,
+            "name": r.name,
+            "foreign_buy": float(r.foreign_buy or 0) if r.foreign_buy is not None else 0,
+            "trust_buy":   float(r.trust_buy   or 0) if r.trust_buy   is not None else 0,
+            "dealer_buy":  float(r.dealer_buy  or 0) if r.dealer_buy  is not None else 0,
+            "date": str(r.date) if r.date else None,
         }
-        result.append(entry)
-
-    return result
+        for r in rows
+    ]
 
 
 @router.post("/api/v1/users/{user_id}/watchlist", status_code=201)
