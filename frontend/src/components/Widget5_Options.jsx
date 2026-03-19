@@ -49,27 +49,28 @@ function PcRatioBar({ value }) {
   )
 }
 
-function NetBar({ label, value, max }) {
-  const isBull = (value ?? 0) >= 0
-  const pct = Math.min(100, Math.abs(value ?? 0) / max * 50) // 50% = max (各佔一半)
-  const color = isBull
-    ? 'bg-gradient-to-r from-red-300 to-red-500'
-    : 'bg-gradient-to-l from-green-300 to-green-500'
+function NetBar({ label, value, max, barColor = 'red' }) {
+  const isPositive = (value ?? 0) >= 0
+  const pct = Math.min(100, Math.abs(value ?? 0) / max * 50)
+  const colorClass = barColor === 'green'
+    ? (isPositive ? 'bg-gradient-to-r from-green-300 to-green-500' : 'bg-gradient-to-l from-green-300 to-green-500')
+    : (isPositive ? 'bg-gradient-to-r from-red-300 to-red-500' : 'bg-gradient-to-l from-red-300 to-red-500')
+  const textColor = barColor === 'green' ? 'text-green-600' : 'text-red-500'
 
   return (
     <div>
       <div className="flex justify-between items-center mb-1">
         <span className="text-xs text-slate-500">{label}</span>
-        <span className={`text-sm font-bold tabular-nums ${isBull ? 'text-red-500' : 'text-green-500'}`}>
-          {value != null ? `${isBull ? '+' : ''}${value.toFixed(1)} 億` : '—'}
+        <span className={`text-sm font-bold tabular-nums ${textColor}`}>
+          {value != null ? `${isPositive ? '+' : ''}${value.toFixed(1)} 億` : '—'}
         </span>
       </div>
       <div className="relative h-2 w-full bg-slate-100 rounded-full overflow-hidden">
         <div
-          className={`absolute top-0 h-full rounded-full transition-all duration-1000 ${color}`}
+          className={`absolute top-0 h-full rounded-full transition-all duration-1000 ${colorClass}`}
           style={{
             width: `${pct}%`,
-            left: isBull ? '50%' : `${50 - pct}%`,
+            left: isPositive ? '50%' : `${50 - pct}%`,
           }}
         />
         <div className="absolute top-0 h-full w-px bg-slate-300" style={{ left: '50%' }} />
@@ -148,11 +149,11 @@ export default function Widget5_Options() {
       <div className="bg-white/40 rounded-2xl p-4">
         <div className="text-xs font-semibold text-slate-600 mb-3">
           外資選擇權淨部位
-          <span className="text-[10px] text-slate-400 font-normal ml-2">多方淨額 (億元)，正=多方偏多</span>
+          <span className="text-[10px] text-slate-400 font-normal ml-2">未平倉淨契約金額 (億元)</span>
         </div>
         <div className="space-y-3">
-          <NetBar label="Call 淨部位（買方看漲）" value={foreign_call_net_yi} max={maxNet} />
-          <NetBar label="Put 淨部位（買方看跌）" value={foreign_put_net_yi} max={maxNet} />
+          <NetBar label="Call 淨部位（買方看漲）" value={foreign_call_net_yi} max={maxNet} barColor="red" />
+          <NetBar label="Put 淨部位（買方看跌）" value={foreign_put_net_yi} max={maxNet} barColor="green" />
         </div>
         {/* OI 摘要 */}
         {(call_total_oi > 0 || put_total_oi > 0) && (
