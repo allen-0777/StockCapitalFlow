@@ -36,3 +36,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# AI / local dev tooling
+.claude/
+.playwright-mcp/
