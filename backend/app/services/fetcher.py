@@ -196,25 +196,27 @@ async def fetch_margin():
         print(f"[fetcher] MI_MARGN stat={data.get('stat')}, skipping")
         return
 
-    margin_long = margin_short = 0
+    margin_long_kth = 0   # 融資金額增減（千元）
+    margin_short = 0      # 融券增減（張）
     for table in data.get("tables", []):
         for row in table.get("data", []):
-            if "融資" in row[0] and "金額" not in row[0]:
+            if "融資金額" in row[0]:  # 融資金額(仟元)
                 prev = _parse_num(row[4])
                 today_val = _parse_num(row[5])
-                margin_long = int(today_val - prev)   # 今日增減（正=增加=多頭）
-            elif "融券" in row[0]:
+                margin_long_kth = int(today_val - prev)   # 千元增減
+            elif "融券" in row[0] and "金額" not in row[0]:  # 融券(交易單位)
                 prev = _parse_num(row[4])
                 today_val = _parse_num(row[5])
-                margin_short = int(today_val - prev)  # 今日增減（正=增加=空頭）
+                margin_short = int(today_val - prev)      # 張增減
 
     with SessionLocal() as db:
         _upsert_chip(db, trading_date, "0000",
-                     margin_long=margin_long,
+                     margin_long=margin_long_kth,    # 存千元，API 層轉億元
                      margin_short=margin_short)
         db.commit()
 
-    print(f"[fetcher] 融資券 done ({trading_date}): 融資={margin_long} 融券={margin_short}")
+    margin_long_yi = round(margin_long_kth / 100000, 2)
+    print(f"[fetcher] 融資券 done ({trading_date}): 融資={margin_long_yi}億元 融券={margin_short}張")
 
 
 async def _get_finmind_futures_oi(futures_id: str, trade_date: str) -> dict:

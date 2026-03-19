@@ -7,28 +7,29 @@ export default function Widget3_LiquidGauge({ data }) {
     )
   }
 
-  const { long_balance_change: longChg, short_balance_change: shortChg } = data.margin
+  // long_yi: 融資增減（億元, float）；short_zhang: 融券增減（張, int）
+  const { long_yi: longYi, short_zhang: shortZhang } = data.margin
 
-  // 多空水位計算：
-  // 融資增 > 0 → 多頭加碼（看漲）
-  // 融券增 > 0 → 空頭加碼（看跌）
-  // 水位% = 50 + 淨多空強度，以 ±50,000 張為參考範圍
-  const sentiment = longChg - shortChg
-  const bullPct = Math.min(100, Math.max(0, Math.round(50 + (sentiment / 50000) * 50)))
+  // 多空水位計算：各自 normalize 後合成
+  // 融資億元：±150 億為極端值；融券張：±15000 張為極端值
+  const longNorm  = Math.max(-1, Math.min(1, longYi   / 150))
+  const shortNorm = Math.max(-1, Math.min(1, shortZhang / 15000))
+  const sentiment = longNorm - shortNorm  // [-2, +2]
+  const bullPct = Math.min(100, Math.max(0, Math.round(50 + sentiment * 25)))
   const isBull = bullPct >= 50
 
-  // 標籤：判斷今日訊號
+  // 標籤
   let label = '中性盤整'
-  if (longChg > 0 && shortChg < 0) label = '強勢多頭'
-  else if (longChg > 0 && shortChg > 0) label = '多空拉鋸'
-  else if (longChg < 0 && shortChg < 0) label = '空方回補'
-  else if (longChg < 0 && shortChg > 0) label = '偏空格局'
+  if (longYi > 0 && shortZhang < 0) label = '強勢多頭'
+  else if (longYi > 0 && shortZhang > 0) label = '多空拉鋸'
+  else if (longYi < 0 && shortZhang < 0) label = '空方回補'
+  else if (longYi < 0 && shortZhang > 0) label = '偏空格局'
 
-  // 單位換算：張 → 萬張（÷ 10,000），顯示到小數一位
-  const fmt = (v) => {
+  // 格式化：融資用億元，融券用萬張
+  const fmtYi = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}億`
+  const fmtZhang = (v) => {
     const wan = v / 10000
-    const sign = v >= 0 ? '+' : ''
-    return `${sign}${wan.toFixed(1)}萬張`
+    return `${v >= 0 ? '+' : ''}${wan.toFixed(1)}萬張`
   }
 
   return (
@@ -66,20 +67,20 @@ export default function Widget3_LiquidGauge({ data }) {
       <div className="mt-8 grid grid-cols-2 gap-4 w-full text-center">
         <div className="bg-white/40 rounded-2xl py-3">
           <div className="text-xs text-slate-500 mb-1">融資增減</div>
-          <div className={`font-bold text-sm ${longChg >= 0 ? 'text-red-500' : 'text-green-500'}`}>
-            {fmt(longChg)}
+          <div className={`font-bold text-sm ${longYi >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+            {fmtYi(longYi)}
           </div>
           <div className="text-[10px] text-slate-400 mt-0.5">
-            {longChg >= 0 ? '多頭加碼' : '多頭退場'}
+            {longYi >= 0 ? '多頭加碼' : '多頭退場'}
           </div>
         </div>
         <div className="bg-white/40 rounded-2xl py-3">
           <div className="text-xs text-slate-500 mb-1">融券增減</div>
-          <div className={`font-bold text-sm ${shortChg <= 0 ? 'text-red-500' : 'text-green-500'}`}>
-            {fmt(shortChg)}
+          <div className={`font-bold text-sm ${shortZhang <= 0 ? 'text-red-500' : 'text-green-500'}`}>
+            {fmtZhang(shortZhang)}
           </div>
           <div className="text-[10px] text-slate-400 mt-0.5">
-            {shortChg <= 0 ? '空方回補' : '空頭加碼'}
+            {shortZhang <= 0 ? '空方回補' : '空頭加碼'}
           </div>
         </div>
       </div>

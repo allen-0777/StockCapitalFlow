@@ -85,8 +85,10 @@ def market_summary(db: Session = Depends(get_db)):
         },
         "institutional_date": str(inst_row.date) if inst_row else None,
         "margin": {
-            "long_balance_change":  margin_row.margin_long  or 0 if margin_row else 0,
-            "short_balance_change": margin_row.margin_short or 0 if margin_row else 0,
+            # margin_long 存的是千元，÷ 100000 轉億元（float）
+            "long_yi":   round(float(margin_row.margin_long  or 0) / 100000, 2) if margin_row else 0,
+            # margin_short 存的是張
+            "short_zhang": int(margin_row.margin_short or 0) if margin_row else 0,
         },
         "margin_date": str(margin_row.date) if margin_row else None,
         "futures_oi": _build_futures_oi(futures_row),
