@@ -1,15 +1,17 @@
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
 
-function StatRow({ label, value, unit = '千股' }) {
+function StatRow({ label, value, unit = '億', decimals = 2 }) {
+  if (value == null) return null
   const isBuy = value > 0
   const isFlat = value === 0
+  const fmt = Math.abs(value).toFixed(decimals)
   return (
     <div className="flex items-center justify-between py-2.5 border-b border-white/40 last:border-0">
       <span className="text-sm text-slate-500">{label}</span>
       <span className={`font-bold text-sm flex items-center gap-1 tabular-nums
         ${isFlat ? 'text-slate-400' : isBuy ? 'text-red-500' : 'text-green-500'}`}>
         {isFlat ? <Minus size={12} /> : isBuy ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-        {isBuy ? `+${value.toFixed(0)}` : value.toFixed(0)}
+        {isBuy ? `+${fmt}` : `-${fmt}`}
         <span className="text-xs font-normal text-slate-400 ml-0.5">{unit}</span>
       </span>
     </div>
@@ -51,26 +53,8 @@ export default function Widget_InstitutionalSummary({ marketData }) {
         <div className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3">信用交易</div>
         {margin ? (
           <>
-            <StatRow label="融資餘額" value={margin.long_balance_change} unit="千股" />
-            <StatRow label="融券餘額" value={margin.short_balance_change} unit="千股" />
-            <div className="mt-3 pt-3 border-t border-white/40">
-              <div className="text-xs text-slate-400 mb-1.5">多空水位</div>
-              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                {(() => {
-                  const total = Math.abs(margin.long_balance_change) + Math.abs(margin.short_balance_change)
-                  const pct = total > 0 ? Math.round(Math.abs(margin.long_balance_change) / total * 100) : 50
-                  return (
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-blue-400 to-cyan-300 transition-all duration-1000"
-                      style={{ width: `${pct}%` }}
-                    />
-                  )
-                })()}
-              </div>
-              <div className="flex justify-between text-xs text-slate-400 mt-1">
-                <span>多方</span><span>空方</span>
-              </div>
-            </div>
+            <StatRow label="融資增減" value={margin.long_yi} unit="億" decimals={2} />
+            <StatRow label="融券增減" value={margin.short_zhang} unit="張" decimals={0} />
           </>
         ) : (
           <p className="text-slate-400 text-sm py-4 text-center">等待資料...</p>
