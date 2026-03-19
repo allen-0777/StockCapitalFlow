@@ -94,6 +94,7 @@ async def fetch_institutional_market():
         db.commit()
 
     print(f"[fetcher] 大盤法人 done ({trading_date}): 外資={foreign_buy:.2f}億 投信={trust_buy:.2f}億 自營={dealer_buy:.2f}億")
+    return trading_date
 
 
 async def fetch_institutional_stocks():
@@ -133,6 +134,7 @@ async def fetch_institutional_stocks():
         db.commit()
 
     print(f"[fetcher] 個股法人 done ({trading_date}): {len(rows_data)} 筆")
+    return trading_date
 
 
 async def fetch_margin():
@@ -165,6 +167,7 @@ async def fetch_margin():
 
     margin_long_yi = round(margin_long_kth / 100000, 2)
     print(f"[fetcher] 融資券 done ({trading_date}): 融資={margin_long_yi}億元 融券={margin_short}張")
+    return trading_date
 
 
 async def _get_finmind_futures_oi(futures_id: str, trade_date: str) -> dict:
@@ -235,6 +238,7 @@ async def fetch_futures_oi():
         f"投信TX 多{tx_trust.get('long')}/空{tx_trust.get('short')}, "
         f"外資MTX 多{mtx_foreign.get('long')}/空{mtx_foreign.get('short')}"
     )
+    return db_date
 
 
 async def fetch_options_data():
@@ -341,3 +345,4 @@ async def fetch_options_data():
         f"P/C={pc_ratio}%  天花板={call_max_strike}  地板={put_max_strike}  "
         f"外資Call淨={foreign_call_net_yi}億  外資Put淨={foreign_put_net_yi}億"
     )
+    return db_date
