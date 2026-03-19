@@ -13,15 +13,21 @@ def _build_futures_oi(row) -> dict:
     tfs = int(row.tx_foreign_short or 0)
     mrl = int(row.mtx_retail_long or 0)
     mrs = int(row.mtx_retail_short or 0)
-    tx_total = tfl + tfs
+    ttl = int(row.trust_tx_long or 0)
+    tts = int(row.trust_tx_short or 0)
+    tx_total  = tfl + tfs
     mtx_total = mrl + mrs
+    trust_total = ttl + tts
     return {
-        "tx_foreign_long": tfl,
-        "tx_foreign_short": tfs,
+        "tx_foreign_long":   tfl,
+        "tx_foreign_short":  tfs,
         "tx_foreign_bull_pct": round(tfl / tx_total * 100, 2) if tx_total else None,
-        "mtx_retail_long": mrl,
-        "mtx_retail_short": mrs,
+        "mtx_retail_long":   mrl,
+        "mtx_retail_short":  mrs,
         "mtx_retail_bull_pct": round(mrl / mtx_total * 100, 2) if mtx_total else None,
+        "trust_tx_long":     ttl,
+        "trust_tx_short":    tts,
+        "trust_tx_bull_pct": round(ttl / trust_total * 100, 2) if trust_total else None,
     }
 
 
@@ -104,4 +110,38 @@ def market_summary(db: Session = Depends(get_db)):
         ],
     }
     cache_set("market_summary", result)
+    return result
+
+
+@router.get("/api/v1/market/options")
+def market_options(db: Session = Depends(get_db)):
+    cached = cache_get("market_options", ttl_seconds=3600)
+    if cached is not None:
+        return cached
+
+    row = db.execute(
+        text("""
+            SELECT date, pc_ratio, call_max_strike, put_max_strike,
+                   call_total_oi, put_total_oi,
+                   foreign_call_net_yi, foreign_put_net_yi
+            FROM daily_options
+            ORDER BY date DESC
+            LIMIT 1
+        """)
+    ).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="尚無選擇權數據")
+
+    result = {
+        "date": str(row.date),
+        "pc_ratio": float(row.pc_ratio) if row.pc_ratio is not None else None,
+        "call_max_strike": float(row.call_max_strike) if row.call_max_strike else None,
+        "put_max_strike":  float(row.put_max_strike)  if row.put_max_strike  else None,
+        "call_total_oi":   int(row.call_total_oi or 0),
+        "put_total_oi":    int(row.put_total_oi  or 0),
+        "foreign_call_net_yi": float(row.foreign_call_net_yi) if row.foreign_call_net_yi is not None else None,
+        "foreign_put_net_yi":  float(row.foreign_put_net_yi)  if row.foreign_put_net_yi  is not None else None,
+    }
+    cache_set("market_options", result)
     return result

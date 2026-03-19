@@ -64,8 +64,23 @@ class DailyChip(Base):
     margin_short = Column(Integer, nullable=True)
     tx_foreign_long = Column(Integer, nullable=True)   # 台指期外資多方未平倉口數
     tx_foreign_short = Column(Integer, nullable=True)  # 台指期外資空方未平倉口數
-    mtx_retail_long = Column(Integer, nullable=True)   # 小台散戶多方未平倉口數
-    mtx_retail_short = Column(Integer, nullable=True)  # 小台散戶空方未平倉口數
+    mtx_retail_long = Column(Integer, nullable=True)   # 小台外資多方未平倉口數
+    mtx_retail_short = Column(Integer, nullable=True)  # 小台外資空方未平倉口數
+    trust_tx_long = Column(Integer, nullable=True)     # 台指期投信多方未平倉口數
+    trust_tx_short = Column(Integer, nullable=True)    # 台指期投信空方未平倉口數
+
+
+class DailyOption(Base):
+    """選擇權每日籌碼摘要"""
+    __tablename__ = "daily_options"
+    date = Column(Date, primary_key=True)
+    pc_ratio = Column(Numeric, nullable=True)           # Put/Call 未平倉比率（近月，%）
+    call_max_strike = Column(Numeric, nullable=True)    # Call 最大 OI 履約價（天花板）
+    put_max_strike = Column(Numeric, nullable=True)     # Put 最大 OI 履約價（地板）
+    call_total_oi = Column(Integer, nullable=True)      # 近月 Call 總未平倉
+    put_total_oi = Column(Integer, nullable=True)       # 近月 Put 總未平倉
+    foreign_call_net_yi = Column(Numeric, nullable=True)  # 外資 Call 淨部位（億元，多-空）
+    foreign_put_net_yi = Column(Numeric, nullable=True)   # 外資 Put 淨部位（億元，多-空）
 
 
 class BrokerDaily(Base):
@@ -95,7 +110,8 @@ def init_db():
             db.commit()
         # 向舊資料庫補欄位（ALTER TABLE 對已存在欄位會拋例外，直接忽略）
         for col in ["tx_foreign_long INTEGER", "tx_foreign_short INTEGER",
-                    "mtx_retail_long INTEGER", "mtx_retail_short INTEGER"]:
+                    "mtx_retail_long INTEGER", "mtx_retail_short INTEGER",
+                    "trust_tx_long INTEGER", "trust_tx_short INTEGER"]:
             try:
                 db.execute(text(f"ALTER TABLE daily_chips ADD COLUMN {col}"))
                 db.commit()
@@ -110,6 +126,9 @@ def init_db():
         ))
         db.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_broker_stock_date ON broker_daily(stock_id, date DESC)"
+        ))
+        db.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_options_date ON daily_options(date DESC)"
         ))
         db.commit()
 

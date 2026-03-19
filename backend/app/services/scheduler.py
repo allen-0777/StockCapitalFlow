@@ -6,6 +6,7 @@ from app.services.fetcher import (
     fetch_institutional_stocks,
     fetch_margin,
     fetch_futures_oi,
+    fetch_options_data,
 )
 from app.models.database import cache_clear
 
@@ -36,10 +37,11 @@ def _job_margin():
 def _job_futures_oi():
     try:
         _run_async(fetch_futures_oi())
+        _run_async(fetch_options_data())
         cache_clear()
-        print("[scheduler] futures_oi 完成，快取已清除")
+        print("[scheduler] futures_oi + options 完成，快取已清除")
     except Exception as e:
-        print(f"[scheduler] ❌ futures_oi 失敗: {e}")
+        print(f"[scheduler] ❌ futures_oi/options 失敗: {e}")
 
 
 def start_scheduler():

@@ -245,8 +245,8 @@ async def _get_finmind_futures_oi(futures_id: str, trade_date: str) -> dict:
 
 
 async def fetch_futures_oi():
-    """用 FinMind 抓台指期(TX)外資 & 小台(MTX)外資未平倉多空
-    自動嘗試今日 → 昨日 → 兩天前，找到有數據的最近交易日
+    """用 FinMind 抓台指期三大法人未平倉（TX + MTX）
+    自動往前找最近有數據的交易日（最多 5 日）
     """
     from datetime import timedelta
 
@@ -264,26 +264,132 @@ async def fetch_futures_oi():
         return
 
     tx_foreign = tx_data.get("外資", {})
-    tx_foreign_long = tx_foreign.get("long", 0)
-    tx_foreign_short = tx_foreign.get("short", 0)
+    tx_trust   = tx_data.get("投信", {})
 
     # --- MTX 外資（同一交易日）---
     mtx_data = await _get_finmind_futures_oi("MTX", trade_date)
     mtx_foreign = mtx_data.get("外資", {})
-    mtx_retail_long = mtx_foreign.get("long", 0)
-    mtx_retail_short = mtx_foreign.get("short", 0)
 
     db_date = datetime.strptime(trade_date, "%Y-%m-%d").date()
     with SessionLocal() as db:
         _upsert_chip(db, db_date, "0000",
-                     tx_foreign_long=tx_foreign_long,
-                     tx_foreign_short=tx_foreign_short,
-                     mtx_retail_long=mtx_retail_long,
-                     mtx_retail_short=mtx_retail_short)
+                     tx_foreign_long=tx_foreign.get("long", 0),
+                     tx_foreign_short=tx_foreign.get("short", 0),
+                     mtx_retail_long=mtx_foreign.get("long", 0),
+                     mtx_retail_short=mtx_foreign.get("short", 0),
+                     trust_tx_long=tx_trust.get("long", 0),
+                     trust_tx_short=tx_trust.get("short", 0))
         db.commit()
 
     print(
         f"[fetcher] 期貨OI done ({trade_date}): "
-        f"外資TX 多{tx_foreign_long}/空{tx_foreign_short}, "
-        f"外資MTX 多{mtx_retail_long}/空{mtx_retail_short}"
+        f"外資TX 多{tx_foreign.get('long')}/空{tx_foreign.get('short')}, "
+        f"投信TX 多{tx_trust.get('long')}/空{tx_trust.get('short')}, "
+        f"外資MTX 多{mtx_foreign.get('long')}/空{mtx_foreign.get('short')}"
+    )
+
+
+async def fetch_options_data():
+    """用 FinMind 抓選擇權三大法人 OI（外資淨金額）+ 各履約價 OI（P/C Ratio、壓力區）"""
+    import os
+    from datetime import timedelta
+    from app.models.database import DailyOption
+
+    token = os.getenv("FINMIND_TOKEN", "")
+    url = "https://api.finmindtrade.com/api/v4/data"
+
+    # 找最近有數據的交易日
+    trade_date = ""
+    inst_rows = []
+    async with aiohttp.ClientSession() as session:
+        for days_back in range(0, 5):
+            d = (date.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+            params = {"dataset": "TaiwanOptionInstitutionalInvestors",
+                      "data_id": "TXO", "start_date": d, "token": token}
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                body = await r.json(content_type=None)
+                rows = [row for row in body.get("data", []) if row.get("date") == d]
+                if rows:
+                    trade_date = d
+                    inst_rows = rows
+                    break
+
+    if not trade_date:
+        print("[fetcher] 選擇權: 查無近期數據，跳過")
+        return
+
+    # --- 外資選擇權淨金額（億元）---
+    # long_open_interest_balance_amount - short_open_interest_balance_amount = 淨部位金額（千元）
+    foreign_call_net_yi = foreign_put_net_yi = 0.0
+    for row in inst_rows:
+        if row["institutional_investors"] != "外資":
+            continue
+        net_kth = (row.get("long_open_interest_balance_amount", 0) or 0) - \
+                  (row.get("short_open_interest_balance_amount", 0) or 0)
+        if row["call_put"] == "買權":
+            foreign_call_net_yi = round(net_kth / 100000, 2)
+        elif row["call_put"] == "賣權":
+            foreign_put_net_yi = round(net_kth / 100000, 2)
+
+    # --- 各履約價 OI（P/C、壓力區）---
+    pc_ratio = call_max_strike = put_max_strike = None
+    call_total_oi = put_total_oi = 0
+    async with aiohttp.ClientSession() as session:
+        params = {"dataset": "TaiwanOptionDaily", "data_id": "TXO",
+                  "start_date": trade_date, "token": token}
+        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            body = await r.json(content_type=None)
+            all_rows = body.get("data", [])
+
+    # 近月合約 position session
+    contracts = sorted(set(row["contract_date"] for row in all_rows))
+    near_month = contracts[0] if contracts else None
+    if near_month:
+        near = [r for r in all_rows
+                if r["contract_date"] == near_month
+                and r["trading_session"] == "position"
+                and r["open_interest"] > 0
+                and r["date"] == trade_date]
+        calls = [r for r in near if r["call_put"] == "call"]
+        puts  = [r for r in near if r["call_put"] == "put"]
+        call_total_oi = sum(r["open_interest"] for r in calls)
+        put_total_oi  = sum(r["open_interest"] for r in puts)
+        if call_total_oi:
+            pc_ratio = round(put_total_oi / call_total_oi * 100, 1)
+        if calls:
+            call_max_strike = max(calls, key=lambda x: x["open_interest"])["strike_price"]
+        if puts:
+            put_max_strike  = max(puts,  key=lambda x: x["open_interest"])["strike_price"]
+
+    db_date = datetime.strptime(trade_date, "%Y-%m-%d").date()
+    with SessionLocal() as db:
+        existing = db.execute(
+            text("SELECT date FROM daily_options WHERE date=:d"), {"d": db_date}
+        ).fetchone()
+        if existing:
+            db.execute(text("""
+                UPDATE daily_options SET
+                  pc_ratio=:pc, call_max_strike=:cs, put_max_strike=:ps,
+                  call_total_oi=:co, put_total_oi=:po,
+                  foreign_call_net_yi=:fcn, foreign_put_net_yi=:fpn
+                WHERE date=:d
+            """), {"pc": pc_ratio, "cs": call_max_strike, "ps": put_max_strike,
+                   "co": call_total_oi, "po": put_total_oi,
+                   "fcn": foreign_call_net_yi, "fpn": foreign_put_net_yi,
+                   "d": db_date})
+        else:
+            db.execute(text("""
+                INSERT INTO daily_options
+                  (date, pc_ratio, call_max_strike, put_max_strike,
+                   call_total_oi, put_total_oi, foreign_call_net_yi, foreign_put_net_yi)
+                VALUES (:d, :pc, :cs, :ps, :co, :po, :fcn, :fpn)
+            """), {"d": db_date, "pc": pc_ratio, "cs": call_max_strike, "ps": put_max_strike,
+                   "co": call_total_oi, "po": put_total_oi,
+                   "fcn": foreign_call_net_yi, "fpn": foreign_put_net_yi})
+        db.commit()
+
+    print(
+        f"[fetcher] 選擇權 done ({trade_date}): "
+        f"P/C={pc_ratio}%  天花板={call_max_strike}  地板={put_max_strike}  "
+        f"外資Call淨={foreign_call_net_yi}億  外資Put淨={foreign_put_net_yi}億"
     )
