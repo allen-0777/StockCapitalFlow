@@ -24,7 +24,7 @@ def _chat_id() -> str:
     return os.getenv("TELEGRAM_CHAT_ID", "")
 
 
-async def send_message(text: str) -> None:
+async def send_message(message: str) -> None:
     """Send a Telegram message. Truncates at 4096 chars. Never raises."""
     token = _token()
     chat_id = _chat_id()
@@ -32,13 +32,13 @@ async def send_message(text: str) -> None:
         logger.warning("[notification] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set, skipping")
         return
 
-    text = text[:4096]
+    message = message[:4096]
     url = TELEGRAM_API.format(token=token)
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+                json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
             ) as resp:
                 if resp.status != 200:
                     body = await resp.text()
@@ -97,8 +97,7 @@ async def send_daily_digest(db: Session) -> None:
         text("""
             SELECT date, foreign_buy, trust_buy, dealer_buy,
                    margin_long, margin_short,
-                   tx_foreign_long, tx_foreign_short,
-                   trust_tx_long, trust_tx_short
+                   tx_foreign_long, tx_foreign_short
             FROM daily_chips
             WHERE stock_id = '0000'
             ORDER BY date DESC LIMIT 1
@@ -111,8 +110,7 @@ async def send_daily_digest(db: Session) -> None:
 
     opt_row = db.execute(
         text("""
-            SELECT date, pc_ratio, call_max_strike, put_max_strike,
-                   foreign_call_net_yi, foreign_put_net_yi
+            SELECT date, pc_ratio, call_max_strike, put_max_strike
             FROM daily_options
             ORDER BY date DESC LIMIT 1
         """)
