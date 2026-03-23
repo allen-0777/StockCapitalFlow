@@ -13,28 +13,29 @@ on:
         required: true
         default: 'institutional'
         type: choice
-        options: [institutional, futures, margin]
+        options: [institutional, futures, margin, all]
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 90
 
     steps:
       - name: Determine job name
         id: job
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          INPUT_JOB: ${{ github.event.inputs.job }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            JOB_NAME="${{ github.event.inputs.job }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            JOB_NAME="$INPUT_JOB"
+          elif [ "$EVENT_SCHEDULE" = "0 9 * * 1-5" ]; then
+            JOB_NAME="institutional"
+          elif [ "$EVENT_SCHEDULE" = "30 9 * * 1-5" ]; then
+            JOB_NAME="futures"
           else
-            MINUTE=$(date -u +%M)
-            if [ "$MINUTE" = "00" ]; then
-              JOB_NAME="institutional"
-            elif [ "$MINUTE" = "30" ]; then
-              JOB_NAME="futures"
-            else
-              JOB_NAME="margin"
-            fi
+            JOB_NAME="margin"
           fi
           echo "name=$JOB_NAME" >> "$GITHUB_OUTPUT"
 
@@ -59,36 +60,46 @@ jobs:
           TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
           JOB_NAME: ${{ steps.job.outputs.name }}
         run: |
-          echo "Triggering job: $JOB_NAME"
-          MAX_RETRIES=3
-          WAIT_SEC=180
+          if [ "$JOB_NAME" = "all" ]; then
+            JOBS="institutional futures margin"
+          else
+            JOBS="$JOB_NAME"
+          fi
 
-          for i in $(seq 1 $MAX_RETRIES); do
-            echo "--- Attempt $i / $MAX_RETRIES ---"
-            RESPONSE=$(curl -s --max-time 300 -X POST \
-              "$BACKEND_URL/api/v1/admin/trigger/$JOB_NAME?secret=$TRIGGER_SECRET") || RESPONSE="{}"
-            echo "Response: $RESPONSE"
+          for CURRENT_JOB in $JOBS; do
+            echo "=== Triggering job: $CURRENT_JOB ==="
+            MAX_RETRIES=3
+            WAIT_SEC=180
 
-            STATUS=$(echo "$RESPONSE" | python3 -c \
-              "import sys,json; d=json.load(sys.stdin); print(d.get('status','error'))" 2>/dev/null || echo "error")
-            DATE_MATCH=$(echo "$RESPONSE" | python3 -c \
-              "import sys,json; d=json.load(sys.stdin); print(d.get('date_match','false'))" 2>/dev/null || echo "false")
+            for i in $(seq 1 $MAX_RETRIES); do
+              echo "--- Attempt $i / $MAX_RETRIES ---"
+              RESPONSE=$(curl -s --max-time 300 -X POST \
+                "$BACKEND_URL/api/v1/admin/trigger/$CURRENT_JOB?secret=$TRIGGER_SECRET") || RESPONSE="{}"
+              echo "Response: $RESPONSE"
 
-            if [ "$STATUS" = "skipped" ]; then
-              echo "Today is not a trading day. Skipping."
-              exit 0
-            fi
+              STATUS=$(echo "$RESPONSE" | python3 -c \
+                "import sys,json; d=json.load(sys.stdin); print(d.get('status','error'))" 2>/dev/null || echo "error")
+              DATE_MATCH=$(echo "$RESPONSE" | python3 -c \
+                "import sys,json; d=json.load(sys.stdin); print(d.get('date_match','false'))" 2>/dev/null || echo "false")
 
-            if [ "$STATUS" = "ok" ] && [ "$DATE_MATCH" = "True" ]; then
-              echo "Success! Data date matches expected."
-              exit 0
-            fi
+              if [ "$STATUS" = "skipped" ]; then
+                echo "Today is not a trading day. Skipping."
+                break
+              fi
 
-            if [ $i -lt $MAX_RETRIES ]; then
-              echo "Data not yet updated. Waiting 10 minutes before retry..."
-              sleep $WAIT_SEC
-            fi
+              DATE_MATCH_LOWER=$(echo "$DATE_MATCH" | tr '[:upper:]' '[:lower:]')
+              if [ "$STATUS" = "ok" ] && [ "$DATE_MATCH_LOWER" = "true" ]; then
+                echo "Success! Data date matches expected."
+                break
+              fi
+
+              if [ $i -lt $MAX_RETRIES ]; then
+                echo "Data not yet updated. Waiting 3 minutes before retry..."
+                sleep $WAIT_SEC
+              fi
+            done
+
+            echo "=== Done: $CURRENT_JOB ==="
           done
 
-          echo "Retries exhausted. Using latest available data."
           exit 0
