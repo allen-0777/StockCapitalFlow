@@ -44,16 +44,20 @@ async def test_send_message_truncates_at_4096():
 
     captured = []
 
-    async def fake_post(url, **kwargs):
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    # Capture the text sent
+    original_post = MagicMock(return_value=mock_resp)
+
+    def capturing_post(url, **kwargs):
         captured.append(kwargs["json"]["text"])
-        resp = MagicMock()
-        resp.status = 200
-        resp.__aenter__ = AsyncMock(return_value=resp)
-        resp.__aexit__ = AsyncMock(return_value=False)
-        return resp
+        return mock_resp
 
     mock_session = MagicMock()
-    mock_session.post = fake_post
+    mock_session.post = capturing_post
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 

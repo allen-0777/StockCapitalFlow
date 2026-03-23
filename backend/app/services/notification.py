@@ -1,6 +1,5 @@
 import os
 import logging
-import inspect
 import aiohttp
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -37,21 +36,13 @@ async def send_message(text: str) -> None:
     url = TELEGRAM_API.format(token=token)
     try:
         async with aiohttp.ClientSession() as session:
-            result = session.post(
+            async with session.post(
                 url,
                 json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            )
-            # Support both sync-returning and async mocks in tests
-            if inspect.iscoroutine(result):
-                resp = await result
+            ) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     logger.warning(f"[notification] Telegram returned {resp.status}: {body[:200]}")
-            else:
-                async with result as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.warning(f"[notification] Telegram returned {resp.status}: {body[:200]}")
     except Exception as e:
         logger.warning(f"[notification] Failed to send Telegram message: {e}")
 
