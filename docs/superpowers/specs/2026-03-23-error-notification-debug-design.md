@@ -21,7 +21,7 @@ Most database tables are empty or nearly empty due to silent failures in the fet
 1. Telegram notifications: failure alerts, per-job success summaries, daily morning digest
 2. Structured per-step error details in API responses
 3. Timing logs in backend fetchers
-4. GitHub Actions exits non-zero on real errors
+4. GitHub Actions exits non-zero on real errors (including partial failures)
 
 ---
 
@@ -42,21 +42,23 @@ backend/app/api/admin.py               ← modify (error capture + notification 
 GitHub Actions
   → POST /api/v1/admin/trigger/{job}?secret=XXX
       → fetcher functions (with timing + exception raising)
-      → NotificationService.send_job_result()
+      → [after all retries exhausted] NotificationService.send_job_result()
   → Returns detailed JSON per step
 
 GitHub Actions (09:00 CST daily)
   → POST /api/v1/admin/daily-digest?secret=XXX
-      → Query DB for latest data
+      → Query DB for most recent available data
       → NotificationService.send_daily_digest()
 ```
 
-### New Environment Variables
+### Environment Variables
 
-| Variable | Where to set |
-|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Render env + GitHub Secrets |
-| `TELEGRAM_CHAT_ID` | Render env + GitHub Secrets |
+| Variable | Where to set | Purpose |
+|----------|-------------|---------|
+| `TELEGRAM_BOT_TOKEN` | Render env only | Backend uses this to call Telegram API |
+| `TELEGRAM_CHAT_ID` | Render env only | Backend uses this to identify target chat |
+
+Note: GitHub Actions does NOT need these. Notification logic lives entirely in the backend. GitHub Actions only needs `RENDER_BACKEND_URL` and `TRIGGER_SECRET`.
 
 ---
 
@@ -68,14 +70,29 @@ GitHub Actions (09:00 CST daily)
 
 ```python
 async def send_message(text: str) -> None
-# Base send. All other functions call this.
+# Base send. Truncates to 4096 chars (Telegram limit) before sending.
 # Silently logs warning on failure — never raises.
 
 async def send_job_result(job: str, steps: list[dict], got_date, expected_date) -> None
-# Called at end of every trigger job (success or failure).
+# Called ONCE after all retries are exhausted (not on each retry attempt).
+# expected_date comes from latest_trading_day() in trading_calendar.py.
 
 async def send_daily_digest(db: Session) -> None
 # Called by /admin/daily-digest endpoint.
+# Queries most recent row in daily_chips and daily_options regardless of date.
+# Works correctly on holidays — shows last available data with its actual date.
+```
+
+### Status Constants
+
+Use string constants to avoid inconsistent literals:
+
+```python
+STEP_OK = "ok"
+STEP_ERROR = "error"
+JOB_OK = "ok"
+JOB_PARTIAL = "partial_error"
+JOB_ERROR = "error"
 ```
 
 ### Message Formats
@@ -91,7 +108,7 @@ async def send_daily_digest(db: Session) -> None
 ```
 ⚠️ futures 部分失敗 (2026-03-21)
 ✓ fetch_futures_oi — 2.1s
-✗ fetch_options_data — FinMind 配額已用盡
+✗ fetch_options_data — FinMind 配額已用盡 (HTTP 402)
 ```
 
 **Full failure:**
@@ -120,15 +137,27 @@ Telegram send failures are caught and logged as warnings. They never propagate t
 
 ### Error Handling
 
-Replace silent `return` on API failures with `raise RuntimeError(...)`:
+Replace silent `return` on API failures with `raise RuntimeError(...)`.
 
-| Function | Current | New |
-|----------|---------|-----|
-| `fetch_institutional_stocks` | prints + returns None if `stat != "OK"` | raises `RuntimeError(f"TWSE T86 stat={stat}")` |
-| `fetch_institutional_market` | prints + returns None if `stat != "OK"` | raises `RuntimeError(f"TWSE BFI82U stat={stat}")` |
-| `fetch_margin` | prints + returns None if `stat != "OK"` | raises `RuntimeError(f"TWSE MI_MARGN stat={stat}")` |
-| `fetch_futures_oi` | prints + returns None if no data | raises `RuntimeError("FinMind 近 5 日查無期貨OI數據")` |
-| `fetch_options_data` | prints + returns None if no data | raises `RuntimeError("FinMind 近 5 日查無選擇權數據")` |
+Two distinct error categories:
+
+**API / infrastructure errors** (always raise):
+
+| Function | Trigger | Error raised |
+|----------|---------|-------------|
+| `fetch_institutional_stocks` | TWSE `stat != "OK"` | `RuntimeError(f"TWSE T86 stat={stat}")` |
+| `fetch_institutional_market` | TWSE `stat != "OK"` | `RuntimeError(f"TWSE BFI82U stat={stat}")` |
+| `fetch_margin` | TWSE `stat != "OK"` | `RuntimeError(f"TWSE MI_MARGN stat={stat}")` |
+| `fetch_futures_oi` / `fetch_options_data` | FinMind HTTP 402 | Already raises `RuntimeError("FinMind API 配額已用盡")` — keep as-is |
+
+**Data not yet published** (return None → retry handles it):
+
+| Function | Trigger | Behavior |
+|----------|---------|---------|
+| `fetch_futures_oi` | FinMind returns empty data for all 5 lookback days | `raise RuntimeError("FinMind 近 5 日查無期貨OI數據")` |
+| `fetch_options_data` | Same | `raise RuntimeError("FinMind 近 5 日查無選擇權數據")` |
+
+Note: "No data for 5 days" is treated as an error (not a retry candidate) because the retry loop in GitHub Actions already covers the case where data isn't published yet on day 0.
 
 ### Timing Logs
 
@@ -149,9 +178,9 @@ Wrap each `fn()` call in try-except. Accumulate step results:
 ```python
 steps.append({
     "fn": fn.__name__,
-    "status": "ok" | "error",
+    "status": STEP_OK | STEP_ERROR,   # use constants
     "duration_s": float,
-    "rows": int | None,    # where applicable
+    "rows": int | None,               # where applicable
     "error": str | None,
     "date": str | None,
 })
@@ -159,11 +188,19 @@ steps.append({
 
 ### Status Logic
 
-| Condition | Returned status |
-|-----------|----------------|
+| Condition | Returned `status` |
+|-----------|------------------|
 | All functions succeed | `"ok"` |
 | Some functions fail | `"partial_error"` |
 | All functions fail | `"error"` |
+
+### Notification Timing
+
+`send_job_result()` is called **once**, after all fetch functions have run. Never called mid-retry.
+
+### Authentication
+
+`POST /api/v1/admin/daily-digest?secret=XXX` uses the same `TRIGGER_SECRET` validation as the existing trigger endpoint. Returns HTTP 403 on invalid/missing secret.
 
 ### New Endpoint
 
@@ -171,20 +208,29 @@ steps.append({
 POST /api/v1/admin/daily-digest?secret=XXX
 ```
 
-Queries `daily_chips` and `daily_options` for the latest trading day, then calls `send_daily_digest()`.
+Queries most recent row from `daily_chips` (stock_id='0000') and `daily_options`, formats, and calls `send_daily_digest()`. Returns `{"status": "ok", "date": "..."}`.
 
 ---
 
 ## Component: GitHub Actions Changes
 
-### daily-fetch.yml
+### Exit Codes
 
-1. **Exit 1 on real errors**: if final STATUS is `"error"` after all retries, exit 1 (enables GitHub email + marks run as failed)
-2. **New `daily-digest` job**: cron `0 1 * * 1-5` (UTC 01:00 = CST 09:00), calls `/admin/daily-digest`
+| Final STATUS | Exit code | Effect |
+|-------------|-----------|--------|
+| `"ok"` | 0 | Success |
+| `"skipped"` | 0 | Non-trading day |
+| `"partial_error"` | 1 | GitHub marks run failed, emails owner |
+| `"error"` | 1 | GitHub marks run failed, emails owner |
+| Retries exhausted, no success | 1 | GitHub marks run failed, emails owner |
+
+### New `daily-digest` Job
 
 ```yaml
 - cron: '0 1 * * 1-5'   # 09:00 CST — daily digest
 ```
+
+Calls `/api/v1/admin/daily-digest?secret=XXX`. Always exits 0 (digest failure should not spam as "failure").
 
 ---
 
@@ -193,3 +239,4 @@ Queries `daily_chips` and `daily_options` for the latest trading day, then calls
 - `stock_prices` and `broker_daily` fetching (on-demand, not daily cron)
 - Backup API sources (separate concern)
 - Frontend error display
+- Retry-per-attempt notifications (would cause spam)
