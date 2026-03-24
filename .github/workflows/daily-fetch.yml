@@ -58,11 +58,28 @@ jobs:
       BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
       TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
     steps:
+      - name: Ensure backend is awake
+        run: |
+          echo "Pinging health endpoint..."
+          for j in $(seq 1 15); do
+            SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$BACKEND_URL/api/v1/health") || SC="000"
+            [ "$SC" = "200" ] && echo "Backend alive (attempt $j)" && exit 0
+            echo "attempt $j/15 (status: $SC)"; sleep 10
+          done
+          echo "WARNING: backend not responding, proceeding anyway"
       - name: Trigger institutional
         run: |
-          MAX_RETRIES=3; WAIT_SEC=180; JOB_OK=0
+          MAX_RETRIES=3; WAIT_SEC=60; JOB_OK=0
+          wake() {
+            for w in $(seq 1 6); do
+              SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_URL/api/v1/health") || SC="000"
+              [ "$SC" = "200" ] && return 0
+              echo "  wake $w/6 (status: $SC)"; sleep 10
+            done
+          }
           for i in $(seq 1 $MAX_RETRIES); do
             echo "--- Attempt $i / $MAX_RETRIES ---"
+            wake
             EXTRA=""; [ "$i" -eq "$MAX_RETRIES" ] && EXTRA="&notify=true"
             RESPONSE=$(curl -sS --max-time 300 -X POST \
               "$BACKEND_URL/api/v1/admin/trigger/institutional?secret=$TRIGGER_SECRET$EXTRA") \
@@ -94,11 +111,28 @@ jobs:
       BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
       TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
     steps:
+      - name: Ensure backend is awake
+        run: |
+          echo "Pinging health endpoint..."
+          for j in $(seq 1 15); do
+            SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$BACKEND_URL/api/v1/health") || SC="000"
+            [ "$SC" = "200" ] && echo "Backend alive (attempt $j)" && exit 0
+            echo "attempt $j/15 (status: $SC)"; sleep 10
+          done
+          echo "WARNING: backend not responding, proceeding anyway"
       - name: Trigger futures
         run: |
-          MAX_RETRIES=3; WAIT_SEC=180; JOB_OK=0
+          MAX_RETRIES=3; WAIT_SEC=60; JOB_OK=0
+          wake() {
+            for w in $(seq 1 6); do
+              SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_URL/api/v1/health") || SC="000"
+              [ "$SC" = "200" ] && return 0
+              echo "  wake $w/6 (status: $SC)"; sleep 10
+            done
+          }
           for i in $(seq 1 $MAX_RETRIES); do
             echo "--- Attempt $i / $MAX_RETRIES ---"
+            wake
             EXTRA=""; [ "$i" -eq "$MAX_RETRIES" ] && EXTRA="&notify=true"
             RESPONSE=$(curl -sS --max-time 300 -X POST \
               "$BACKEND_URL/api/v1/admin/trigger/futures?secret=$TRIGGER_SECRET$EXTRA") \
@@ -130,11 +164,28 @@ jobs:
       BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
       TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
     steps:
+      - name: Ensure backend is awake
+        run: |
+          echo "Pinging health endpoint..."
+          for j in $(seq 1 15); do
+            SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$BACKEND_URL/api/v1/health") || SC="000"
+            [ "$SC" = "200" ] && echo "Backend alive (attempt $j)" && exit 0
+            echo "attempt $j/15 (status: $SC)"; sleep 10
+          done
+          echo "WARNING: backend not responding, proceeding anyway"
       - name: Trigger margin
         run: |
-          MAX_RETRIES=3; WAIT_SEC=180; JOB_OK=0
+          MAX_RETRIES=3; WAIT_SEC=60; JOB_OK=0
+          wake() {
+            for w in $(seq 1 6); do
+              SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_URL/api/v1/health") || SC="000"
+              [ "$SC" = "200" ] && return 0
+              echo "  wake $w/6 (status: $SC)"; sleep 10
+            done
+          }
           for i in $(seq 1 $MAX_RETRIES); do
             echo "--- Attempt $i / $MAX_RETRIES ---"
+            wake
             EXTRA=""; [ "$i" -eq "$MAX_RETRIES" ] && EXTRA="&notify=true"
             RESPONSE=$(curl -sS --max-time 300 -X POST \
               "$BACKEND_URL/api/v1/admin/trigger/margin?secret=$TRIGGER_SECRET$EXTRA") \
