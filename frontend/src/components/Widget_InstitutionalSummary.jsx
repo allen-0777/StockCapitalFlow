@@ -27,7 +27,7 @@ export default function Widget_InstitutionalSummary({ marketData }) {
     <div className="flex flex-col gap-5">
 
       {/* 大盤三大法人摘要 */}
-      <div className="glass-card rounded-[2rem] p-5 flex flex-col">
+      <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-5 flex flex-col">
         <div className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3">今日大盤法人</div>
         {inst ? (
           <>
@@ -49,7 +49,7 @@ export default function Widget_InstitutionalSummary({ marketData }) {
       </div>
 
       {/* 融資融券 */}
-      <div className="glass-card rounded-[2rem] p-5 flex flex-col">
+      <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-5 flex flex-col">
         <div className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3">信用交易</div>
         {margin ? (
           <>

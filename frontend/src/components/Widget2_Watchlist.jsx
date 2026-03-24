@@ -23,8 +23,8 @@ export default function Widget2_Watchlist({ watchlist, onRefresh }) {
   }
 
   return (
-    <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 flex flex-col">
-      <div className="flex justify-between items-center mb-6">
+    <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-6 flex flex-col">
+      <div className="flex justify-between items-center mb-4 sm:mb-6">
         <h2 className="text-lg font-bold text-slate-800">關注清單籌碼動能</h2>
         <div className="flex items-center space-x-2">
           <input
@@ -58,11 +58,11 @@ export default function Widget2_Watchlist({ watchlist, onRefresh }) {
               className="group flex items-center justify-between p-3 rounded-2xl hover:bg-white/60 transition-all border border-transparent hover:border-white/80 cursor-pointer"
             >
               <div className="flex items-center space-x-4">
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center font-bold text-slate-600 shadow-inner text-xs">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center font-bold text-slate-600 shadow-inner text-xs">
                   {stock.stock_id}
                 </div>
                 <div>
-                  <div className="font-bold text-slate-800 text-lg">{stock.name || stock.stock_id}</div>
+                  <div className="font-bold text-slate-800 text-sm sm:text-lg">{stock.name || stock.stock_id}</div>
                   <div className="flex items-center text-xs space-x-2">
                     <span className="text-slate-400">{stock.stock_id}</span>
                     <span className="text-slate-300">|</span>
@@ -80,7 +80,7 @@ export default function Widget2_Watchlist({ watchlist, onRefresh }) {
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => handleRemove(stock.stock_id)}
-                  className="p-1.5 rounded-full text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                  className="p-1.5 rounded-full text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors sm:opacity-0 sm:group-hover:opacity-100"
                 >
                   <Trash2 size={16} />
                 </button>

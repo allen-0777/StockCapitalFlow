@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity, Layers, PieChart, Building2 } from 'lucide-react'
+import { Activity, Layers, PieChart, Building2, Star } from 'lucide-react'
 import useStore from '../store/useStore'
 
 const tabs = [
@@ -7,6 +7,7 @@ const tabs = [
   { id: 'institutional', icon: <Layers size={20} />, label: '法人進出' },
   { id: 'broker', icon: <Building2 size={20} />, label: '分點進出' },
   { id: 'concentration', icon: <PieChart size={20} />, label: '法人持股' },
+  { id: 'watchlist', icon: <Star size={20} />, label: '自選股' },
 ]
 
 export default function Sidebar() {
@@ -21,7 +22,7 @@ export default function Sidebar() {
   }, [])
 
   return (
-    <div className="lg:col-span-2 flex flex-col space-y-2 z-10">
+    <div className="flex flex-col space-y-2 z-10 w-full">
       {tabs.map((tab) => (
         <button
           key={tab.id}

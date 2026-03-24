@@ -27,11 +27,11 @@ export default function MarketDataFreshnessBar({ data }) {
   const allAligned = unique.size === 1
 
   return (
-    <div className="md:col-span-2 lg:col-span-3 rounded-2xl border border-slate-200/90 bg-gradient-to-r from-slate-50/95 to-blue-50/40 px-4 py-3 shadow-sm">
+    <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-r from-slate-50/95 to-blue-50/40 px-3 sm:px-4 py-2.5 sm:py-3 shadow-sm">
       <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
-        <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800 shrink-0">
-          <CalendarClock className="w-4 h-4 text-blue-500 shrink-0" aria-hidden />
-          本頁資料日
+        <span className="inline-flex items-center gap-1 sm:gap-1.5 font-semibold text-slate-800 shrink-0 text-xs sm:text-sm">
+          <CalendarClock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-500 shrink-0" aria-hidden />
+          資料日
         </span>
         {allAligned ? (
           <span className="text-slate-600">

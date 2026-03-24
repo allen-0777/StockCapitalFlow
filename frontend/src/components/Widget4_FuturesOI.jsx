@@ -49,7 +49,7 @@ function getConflictLabel(foreignBull, trustBull) {
 export default function Widget4_FuturesOI({ data }) {
   if (!data || !data.futures_oi) {
     return (
-      <div className="md:col-span-2 lg:col-span-3 glass-card rounded-[2rem] p-6 flex items-center justify-center h-32">
+      <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-6 flex items-center justify-center h-28 sm:h-32">
         <p className="text-slate-400 text-sm">期貨OI 尚無資料，等待 17:15 排程</p>
       </div>
     )
@@ -77,7 +77,7 @@ export default function Widget4_FuturesOI({ data }) {
   ]
 
   return (
-    <div className="md:col-span-2 lg:col-span-3 glass-card rounded-[2rem] p-6">
+    <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-6">
       {/* 標題列 */}
       <div className="flex items-start justify-between mb-5">
         <div>
@@ -93,7 +93,7 @@ export default function Widget4_FuturesOI({ data }) {
       </div>
 
       {/* 外資大台 / 外資小台（主指標）*/}
-      <div className="grid grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4">
         {items.map(({ label, sublabel, pct, histKey }) => {
           const isNull = pct == null
           const bullPct = isNull ? 50 : pct

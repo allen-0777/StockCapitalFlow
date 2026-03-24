@@ -104,7 +104,7 @@ export default function Widget5_Options({ refreshNonce = 0 }) {
 
   if (loading) {
     return (
-      <div className="md:col-span-2 lg:col-span-3 glass-card rounded-[2rem] p-6 flex items-center justify-center h-32">
+      <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-6 flex items-center justify-center h-32">
         <p className="text-slate-400 text-sm">載入選擇權數據中…</p>
       </div>
     )
@@ -112,7 +112,7 @@ export default function Widget5_Options({ refreshNonce = 0 }) {
 
   if (!data) {
     return (
-      <div className="md:col-span-2 lg:col-span-3 glass-card rounded-[2rem] p-6 flex items-center justify-center h-32">
+      <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-6 flex items-center justify-center h-32">
         <p className="text-slate-400 text-sm">選擇權資料尚無，等待 17:15 排程</p>
       </div>
     )
@@ -133,7 +133,7 @@ export default function Widget5_Options({ refreshNonce = 0 }) {
   )
 
   return (
-    <div className="md:col-span-2 lg:col-span-3 glass-card rounded-[2rem] p-6">
+    <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-6">
       {/* 標題 */}
       <div className="flex items-start justify-between mb-5">
         <div>

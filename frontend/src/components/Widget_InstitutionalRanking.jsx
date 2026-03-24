@@ -67,7 +67,7 @@ export default function Widget_InstitutionalRanking() {
   }, [type, order])
 
   return (
-    <div className="glass-card rounded-[2rem] p-6 flex flex-col h-full">
+    <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-6 flex flex-col h-full">
 
       {/* Header：標題列 + 控制列，窄版各佔一行 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-5 gap-3">

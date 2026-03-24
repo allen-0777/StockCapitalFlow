@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
+import BottomTabBar from './components/BottomTabBar'
 import Widget1_Institutional from './components/Widget1_Institutional'
 import Widget2_Watchlist from './components/Widget2_Watchlist'
 import Widget3_LiquidGauge from './components/Widget3_LiquidGauge'
@@ -49,51 +50,63 @@ export default function App() {
   }, [fetchMarket, fetchWatchlist])
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans overflow-hidden relative">
+    <div className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans relative">
 
-      {/* 液態背景 Blobs */}
+      {/* Background blobs — smaller on mobile */}
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden -z-10 pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-blue-200 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob"></div>
-        <div className="absolute top-[20%] right-[-10%] w-96 h-96 bg-cyan-200 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob animation-delay-2000"></div>
-        <div className="absolute bottom-[-20%] left-[20%] w-96 h-96 bg-emerald-100 rounded-full mix-blend-multiply filter blur-3xl opacity-70 animate-blob animation-delay-4000"></div>
+        <div className="absolute top-[-10%] left-[-10%] w-64 h-64 sm:w-96 sm:h-96 bg-blue-200 rounded-full mix-blend-multiply filter blur-3xl opacity-40 sm:opacity-70 animate-blob"></div>
+        <div className="absolute top-[20%] right-[-10%] w-64 h-64 sm:w-96 sm:h-96 bg-cyan-200 rounded-full mix-blend-multiply filter blur-3xl opacity-40 sm:opacity-70 animate-blob animation-delay-2000"></div>
+        <div className="absolute bottom-[-20%] left-[20%] w-64 h-64 sm:w-96 sm:h-96 bg-emerald-100 rounded-full mix-blend-multiply filter blur-3xl opacity-40 sm:opacity-70 animate-blob animation-delay-4000"></div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 h-screen flex flex-col">
-        <Header onRefresh={handleRefresh} />
+      {/* Header */}
+      <Header onRefresh={handleRefresh} />
 
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 min-h-0">
+      {/* Desktop sidebar + content layout */}
+      <div className="max-w-7xl mx-auto lg:px-8 lg:py-6 lg:grid lg:grid-cols-12 lg:gap-8">
+
+        {/* Desktop sidebar (hidden on mobile) */}
+        <div className="hidden lg:flex lg:col-span-2">
           <Sidebar />
-
-          <div className="lg:col-span-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto pb-8 z-10 pr-2 custom-scrollbar">
-            {activeTab === 'overview' && (
-              <>
-                <MarketDataFreshnessBar data={marketData} />
-                <Widget1_Institutional data={marketData} />
-                <Widget2_Watchlist watchlist={watchlist} onRefresh={fetchWatchlist} />
-                <Widget3_LiquidGauge data={marketData} />
-                <Widget4_FuturesOI data={marketData} />
-                <Widget5_Options refreshNonce={optionsRefreshNonce} />
-              </>
-            )}
-            {activeTab === 'institutional' && (
-              <>
-                <div className="lg:col-span-2 md:col-span-2">
-                  <Widget_InstitutionalRanking />
-                </div>
-                <div className="lg:col-span-1">
-                  <Widget_InstitutionalSummary marketData={marketData} />
-                </div>
-              </>
-            )}
-            {activeTab === 'broker' && (
-              <Widget_BrokerFlow />
-            )}
-            {activeTab === 'concentration' && (
-              <Widget_Concentration />
-            )}
-          </div>
         </div>
+
+        {/* Main content area */}
+        <main className="lg:col-span-10 px-4 pb-20 lg:pb-8 pt-4 lg:pt-0 space-y-4 sm:space-y-6 overflow-y-auto lg:max-h-[calc(100vh-8rem)] custom-scrollbar">
+
+          {activeTab === 'overview' && (
+            <>
+              <MarketDataFreshnessBar data={marketData} />
+              <Widget1_Institutional data={marketData} />
+              <Widget3_LiquidGauge data={marketData} />
+              <Widget4_FuturesOI data={marketData} />
+              <Widget5_Options refreshNonce={optionsRefreshNonce} />
+            </>
+          )}
+
+          {activeTab === 'institutional' && (
+            <>
+              <Widget_InstitutionalSummary marketData={marketData} />
+              <Widget_InstitutionalRanking />
+            </>
+          )}
+
+          {activeTab === 'broker' && (
+            <Widget_BrokerFlow />
+          )}
+
+          {activeTab === 'concentration' && (
+            <Widget_Concentration />
+          )}
+
+          {activeTab === 'watchlist' && (
+            <Widget2_Watchlist watchlist={watchlist} onRefresh={fetchWatchlist} />
+          )}
+
+        </main>
       </div>
+
+      {/* Bottom tab bar (mobile only) */}
+      <BottomTabBar />
 
     </div>
   )

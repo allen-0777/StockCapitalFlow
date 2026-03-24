@@ -68,7 +68,7 @@ export default function Widget3_LiquidGauge({ data }) {
   )
 
   return (
-    <div className="glass-card rounded-[2rem] p-6 sm:p-7 flex flex-col gap-6 w-full min-w-0">
+    <div className="glass-card rounded-2xl sm:rounded-[2rem] p-4 sm:p-7 flex flex-col gap-4 sm:gap-6 w-full min-w-0">
       <header className="w-full shrink-0 min-w-0">
         {dateMismatch ? (
           <div ref={infoAnchorRef} className="w-full min-w-0 space-y-2">
@@ -102,7 +102,7 @@ export default function Widget3_LiquidGauge({ data }) {
       </header>
 
       {/* 液態球 */}
-      <div className="relative w-48 h-48 mx-auto shrink-0 rounded-full border-4 border-white/50 bg-white/20 shadow-[inset_0_-10px_30px_rgba(59,130,246,0.2)] overflow-hidden flex items-center justify-center">
+      <div className="relative w-36 h-36 sm:w-48 sm:h-48 mx-auto shrink-0 rounded-full border-4 border-white/50 bg-white/20 shadow-[inset_0_-10px_30px_rgba(59,130,246,0.2)] overflow-hidden flex items-center justify-center">
         <div
           className="absolute bottom-0 w-[200%] h-[200%] bg-gradient-to-t from-blue-400/80 to-cyan-300/80 rounded-[40%]"
           style={{
@@ -118,7 +118,7 @@ export default function Widget3_LiquidGauge({ data }) {
           }}
         />
         <div className="relative z-10 text-center drop-shadow-md">
-          <div className="text-4xl font-black text-white tabular-nums">
+          <div className="text-3xl sm:text-4xl font-black text-white tabular-nums">
             {bullPct}<span className="text-xl">%</span>
           </div>
           <div className="text-xs text-white/90 font-medium mt-1">{label}</div>
