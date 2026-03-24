@@ -75,11 +75,11 @@ export default function App() {
 
           {activeTab === 'overview' && (
             <>
-              <MarketDataFreshnessBar data={marketData} />
               <Widget1_Institutional data={marketData} />
               <Widget3_LiquidGauge data={marketData} />
               <Widget4_FuturesOI data={marketData} />
               <Widget5_Options refreshNonce={optionsRefreshNonce} />
+              <MarketDataFreshnessBar data={marketData} />
             </>
           )}
 
