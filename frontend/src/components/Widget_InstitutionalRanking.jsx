@@ -134,7 +134,7 @@ export default function Widget_InstitutionalRanking() {
           ))}
         </div>
         <div className="ml-auto shrink-0 text-right">
-          <span className="md:hidden">{TYPE_OPTIONS.find(o => o.value === type)?.short ?? '合計'}</span>
+          <span className="md:hidden">張數</span>
           <span className="hidden md:inline">三大合計</span>
         </div>
       </div>
