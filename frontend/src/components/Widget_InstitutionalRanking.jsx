@@ -43,11 +43,25 @@ function RankRow({ rank, item, col }) {
         })}
       </div>
 
-      {/* 三大合計：永遠靠右 */}
-      <div className={`ml-auto flex items-center font-bold text-sm shrink-0 tabular-nums ${isTotalBuy ? 'text-red-500' : 'text-green-500'}`}>
-        {isTotalBuy ? <TrendingUp size={13} className="mr-1 shrink-0" /> : <TrendingDown size={13} className="mr-1 shrink-0" />}
-        {isTotalBuy ? `+${total.toFixed(0)}` : total.toFixed(0)}
-      </div>
+      {/* 手機：顯示當前選中法人的數字；桌面：顯示三大合計 */}
+      {(() => {
+        const mobileVal = col === 'total' ? total : (item[`${col}_buy`] ?? 0)
+        const isMobileBuy = mobileVal >= 0
+        return (
+          <>
+            {/* 手機版：選中的法人數字 */}
+            <div className={`md:hidden ml-auto flex items-center font-bold text-sm shrink-0 tabular-nums ${isMobileBuy ? 'text-red-500' : 'text-green-500'}`}>
+              {isMobileBuy ? <TrendingUp size={13} className="mr-1 shrink-0" /> : <TrendingDown size={13} className="mr-1 shrink-0" />}
+              {isMobileBuy ? `+${mobileVal.toFixed(0)}` : mobileVal.toFixed(0)}
+            </div>
+            {/* 桌面版：三大合計 */}
+            <div className={`hidden md:flex ml-auto items-center font-bold text-sm shrink-0 tabular-nums ${isTotalBuy ? 'text-red-500' : 'text-green-500'}`}>
+              {isTotalBuy ? <TrendingUp size={13} className="mr-1 shrink-0" /> : <TrendingDown size={13} className="mr-1 shrink-0" />}
+              {isTotalBuy ? `+${total.toFixed(0)}` : total.toFixed(0)}
+            </div>
+          </>
+        )
+      })()}
     </div>
   )
 }
@@ -119,7 +133,10 @@ export default function Widget_InstitutionalRanking() {
             </span>
           ))}
         </div>
-        <div className="ml-auto shrink-0 text-right">三大合計</div>
+        <div className="ml-auto shrink-0 text-right">
+          <span className="md:hidden">{TYPE_OPTIONS.find(o => o.value === type)?.short ?? '合計'}</span>
+          <span className="hidden md:inline">三大合計</span>
+        </div>
       </div>
 
       {/* 列表 */}
