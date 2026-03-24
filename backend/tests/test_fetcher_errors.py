@@ -61,18 +61,16 @@ async def test_fetch_margin_raises_on_closed_stat():
 
 
 @pytest.mark.asyncio
-async def test_fetch_futures_oi_raises_when_no_data_in_5_days():
+async def test_fetch_futures_oi_raises_when_taifex_empty():
     from app.services.fetcher import fetch_futures_oi
-    empty = {"data": []}
-    with patch("aiohttp.ClientSession", return_value=_mock_finmind_get(empty)):
-        with pytest.raises(RuntimeError, match="近 5 日查無期貨OI數據"):
+    with patch("app.services.fetcher._get_taifex_json", new_callable=AsyncMock, return_value=[]):
+        with pytest.raises(RuntimeError, match="TAIFEX 期貨三大法人 API 回傳空資料"):
             await fetch_futures_oi()
 
 
 @pytest.mark.asyncio
-async def test_fetch_options_data_raises_when_no_data_in_5_days():
+async def test_fetch_options_data_raises_when_taifex_empty():
     from app.services.fetcher import fetch_options_data
-    empty = {"data": []}
-    with patch("aiohttp.ClientSession", return_value=_mock_finmind_get(empty)):
-        with pytest.raises(RuntimeError, match="近 5 日查無選擇權數據"):
+    with patch("app.services.fetcher._get_taifex_json", new_callable=AsyncMock, return_value=[]):
+        with pytest.raises(RuntimeError, match="TAIFEX 選擇權三大法人 API 回傳空資料"):
             await fetch_options_data()

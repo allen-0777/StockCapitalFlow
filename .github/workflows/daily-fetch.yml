@@ -2,104 +2,185 @@ name: Daily Market Data Fetch
 
 on:
   schedule:
-    # 台灣時間（UTC+8）→ UTC
-    - cron: '0 9 * * 1-5'    # 17:00 CST — 法人買賣超
-    - cron: '30 9 * * 1-5'   # 17:30 CST — 期貨OI + 選擇權
-    - cron: '45 9 * * 1-5'   # 17:45 CST — 融資券
-  workflow_dispatch:          # 允許手動觸發（測試用）
+    - cron: '30 9 * * 1-5'   # 17:30 CST — 喚醒後並行跑三個 job
+    - cron: '0 14 * * *'     # 22:00 CST — 每日 Telegram 彙整（含假日）
+  workflow_dispatch:
     inputs:
       job:
-        description: 'Job to run (institutional / futures / margin)'
+        description: 'Job to run'
         required: true
-        default: 'institutional'
+        default: 'all'
         type: choice
-        options: [institutional, futures, margin, all]
+        options:
+          - institutional
+          - futures
+          - margin
+          - daily-digest
+          - all
 
+# ── 1. 喚醒 Render ────────────────────────────────────────────
 jobs:
-  fetch:
+  wake:
+    if: |
+      github.event.schedule == '30 9 * * 1-5' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'daily-digest')
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-
+    timeout-minutes: 35
     steps:
-      - name: Determine job name
-        id: job
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_SCHEDULE: ${{ github.event.schedule }}
-          INPUT_JOB: ${{ github.event.inputs.job }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            JOB_NAME="$INPUT_JOB"
-          elif [ "$EVENT_SCHEDULE" = "0 9 * * 1-5" ]; then
-            JOB_NAME="institutional"
-          elif [ "$EVENT_SCHEDULE" = "30 9 * * 1-5" ]; then
-            JOB_NAME="futures"
-          else
-            JOB_NAME="margin"
-          fi
-          echo "name=$JOB_NAME" >> "$GITHUB_OUTPUT"
-
       - name: Wake up Render backend
         env:
           BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
         run: |
           echo "Warming up backend..."
-          for j in $(seq 1 12); do
+          for j in $(seq 1 20); do
             STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$BACKEND_URL/api/v1/health") || STATUS_CODE="000"
             if [ "$STATUS_CODE" = "200" ]; then
               echo "Backend is awake (attempt $j)"
-              break
+              exit 0
             fi
-            echo "Waiting... attempt $j/12 (status: $STATUS_CODE)"
+            echo "Waiting... attempt $j/20 (status: $STATUS_CODE)"
             sleep 10
           done
+          echo "WARNING: backend did not respond after 20 attempts, proceeding anyway"
 
-      - name: Trigger fetch with retry
-        env:
-          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
-          TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
-          JOB_NAME: ${{ steps.job.outputs.name }}
+# ── 2. 三個資料 job 並行（等 wake 完成後同時啟動）─────────────
+
+  institutional:
+    needs: [wake]
+    if: |
+      always() && needs.wake.result != 'cancelled' &&
+      (github.event.schedule == '30 9 * * 1-5' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.job == 'institutional' || github.event.inputs.job == 'all')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+      TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+    steps:
+      - name: Trigger institutional
         run: |
-          if [ "$JOB_NAME" = "all" ]; then
-            JOBS="institutional futures margin"
-          else
-            JOBS="$JOB_NAME"
-          fi
-
-          for CURRENT_JOB in $JOBS; do
-            echo "=== Triggering job: $CURRENT_JOB ==="
-            MAX_RETRIES=3
-            WAIT_SEC=180
-
-            for i in $(seq 1 $MAX_RETRIES); do
-              echo "--- Attempt $i / $MAX_RETRIES ---"
-              RESPONSE=$(curl -s --max-time 300 -X POST \
-                "$BACKEND_URL/api/v1/admin/trigger/$CURRENT_JOB?secret=$TRIGGER_SECRET") || RESPONSE="{}"
-              echo "Response: $RESPONSE"
-
-              STATUS=$(echo "$RESPONSE" | python3 -c \
-                "import sys,json; d=json.load(sys.stdin); print(d.get('status','error'))" 2>/dev/null || echo "error")
-              DATE_MATCH=$(echo "$RESPONSE" | python3 -c \
-                "import sys,json; d=json.load(sys.stdin); print(d.get('date_match','false'))" 2>/dev/null || echo "false")
-
-              if [ "$STATUS" = "skipped" ]; then
-                echo "Today is not a trading day. Skipping."
-                break
-              fi
-
-              DATE_MATCH_LOWER=$(echo "$DATE_MATCH" | tr '[:upper:]' '[:lower:]')
-              if [ "$STATUS" = "ok" ] && [ "$DATE_MATCH_LOWER" = "true" ]; then
-                echo "Success! Data date matches expected."
-                break
-              fi
-
-              if [ $i -lt $MAX_RETRIES ]; then
-                echo "Data not yet updated. Waiting 3 minutes before retry..."
-                sleep $WAIT_SEC
-              fi
-            done
-
-            echo "=== Done: $CURRENT_JOB ==="
+          MAX_RETRIES=3; WAIT_SEC=180; JOB_OK=0
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "--- Attempt $i / $MAX_RETRIES ---"
+            EXTRA=""; [ "$i" -eq "$MAX_RETRIES" ] && EXTRA="&notify=true"
+            RESPONSE=$(curl -sS --max-time 300 -X POST \
+              "$BACKEND_URL/api/v1/admin/trigger/institutional?secret=$TRIGGER_SECRET$EXTRA") \
+              || RESPONSE="{}"
+            echo "Response: $RESPONSE"
+            STATUS=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(d.get('status','error'))" \
+              2>/dev/null || echo "error")
+            DATE_MATCH=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(str(d.get('date_match','false')).lower())" \
+              2>/dev/null || echo "false")
+            [ "$STATUS" = "skipped" ] && echo "Non-trading day, skipped." && JOB_OK=1 && break
+            [ "$STATUS" != "error" ] && [ "$DATE_MATCH" = "true" ] && echo "Success." && JOB_OK=1 && break
+            [ "$i" -lt "$MAX_RETRIES" ] && echo "Waiting ${WAIT_SEC}s..." && sleep "$WAIT_SEC"
           done
+          [ "$JOB_OK" != "1" ] && echo "FAILED after $MAX_RETRIES attempts" && exit 1
+          exit 0
 
+  futures:
+    needs: [wake]
+    if: |
+      always() && needs.wake.result != 'cancelled' &&
+      (github.event.schedule == '30 9 * * 1-5' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.job == 'futures' || github.event.inputs.job == 'all')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+      TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+    steps:
+      - name: Trigger futures
+        run: |
+          MAX_RETRIES=3; WAIT_SEC=180; JOB_OK=0
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "--- Attempt $i / $MAX_RETRIES ---"
+            EXTRA=""; [ "$i" -eq "$MAX_RETRIES" ] && EXTRA="&notify=true"
+            RESPONSE=$(curl -sS --max-time 300 -X POST \
+              "$BACKEND_URL/api/v1/admin/trigger/futures?secret=$TRIGGER_SECRET$EXTRA") \
+              || RESPONSE="{}"
+            echo "Response: $RESPONSE"
+            STATUS=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(d.get('status','error'))" \
+              2>/dev/null || echo "error")
+            DATE_MATCH=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(str(d.get('date_match','false')).lower())" \
+              2>/dev/null || echo "false")
+            [ "$STATUS" = "skipped" ] && echo "Non-trading day, skipped." && JOB_OK=1 && break
+            [ "$STATUS" != "error" ] && [ "$DATE_MATCH" = "true" ] && echo "Success." && JOB_OK=1 && break
+            [ "$i" -lt "$MAX_RETRIES" ] && echo "Waiting ${WAIT_SEC}s..." && sleep "$WAIT_SEC"
+          done
+          [ "$JOB_OK" != "1" ] && echo "FAILED after $MAX_RETRIES attempts" && exit 1
+          exit 0
+
+  margin:
+    needs: [wake]
+    if: |
+      always() && needs.wake.result != 'cancelled' &&
+      (github.event.schedule == '30 9 * * 1-5' ||
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.job == 'margin' || github.event.inputs.job == 'all')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+      TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+    steps:
+      - name: Trigger margin
+        run: |
+          MAX_RETRIES=3; WAIT_SEC=180; JOB_OK=0
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "--- Attempt $i / $MAX_RETRIES ---"
+            EXTRA=""; [ "$i" -eq "$MAX_RETRIES" ] && EXTRA="&notify=true"
+            RESPONSE=$(curl -sS --max-time 300 -X POST \
+              "$BACKEND_URL/api/v1/admin/trigger/margin?secret=$TRIGGER_SECRET$EXTRA") \
+              || RESPONSE="{}"
+            echo "Response: $RESPONSE"
+            STATUS=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(d.get('status','error'))" \
+              2>/dev/null || echo "error")
+            DATE_MATCH=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(str(d.get('date_match','false')).lower())" \
+              2>/dev/null || echo "false")
+            [ "$STATUS" = "skipped" ] && echo "Non-trading day, skipped." && JOB_OK=1 && break
+            [ "$STATUS" != "error" ] && [ "$DATE_MATCH" = "true" ] && echo "Success." && JOB_OK=1 && break
+            [ "$i" -lt "$MAX_RETRIES" ] && echo "Waiting ${WAIT_SEC}s..." && sleep "$WAIT_SEC"
+          done
+          [ "$JOB_OK" != "1" ] && echo "FAILED after $MAX_RETRIES attempts" && exit 1
+          exit 0
+
+# ── 3. 每日彙整（獨立，不依賴 wake）─────────────────────────
+
+  daily-digest:
+    if: |
+      github.event.schedule == '0 14 * * *' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'daily-digest')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+      TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+    steps:
+      - name: Wake up (brief)
+        run: |
+          for j in $(seq 1 6); do
+            STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
+              "$BACKEND_URL/api/v1/health") || STATUS_CODE="000"
+            [ "$STATUS_CODE" = "200" ] && echo "Backend awake" && break
+            echo "attempt $j/6 (status: $STATUS_CODE)"; sleep 10
+          done
+      - name: Trigger daily-digest
+        run: |
+          RESPONSE=$(curl -sS --max-time 120 -X POST \
+            "$BACKEND_URL/api/v1/admin/daily-digest?secret=$TRIGGER_SECRET" \
+            || echo '{"status":"error"}')
+          echo "Response: $RESPONSE"
+          STATUS=$(echo "$RESPONSE" | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); print(d.get('status','error'))" \
+            2>/dev/null || echo "error")
+          [ "$STATUS" != "ok" ] && echo "daily-digest failed" && exit 1
           exit 0

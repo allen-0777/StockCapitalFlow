@@ -79,16 +79,28 @@ function NetBar({ label, value, max, barColor = 'red' }) {
   )
 }
 
-export default function Widget5_Options() {
+export default function Widget5_Options({ refreshNonce = 0 }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let cancelled = false
+    setLoading(true)
     fetch('/api/v1/market/options')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { setData(d); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [])
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled) setData(d)
+      })
+      .catch(() => {
+        if (!cancelled) setData(null)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [refreshNonce])
 
   if (loading) {
     return (

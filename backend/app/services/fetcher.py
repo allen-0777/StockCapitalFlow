@@ -8,6 +8,10 @@ from sqlalchemy import text
 from app.models.database import SessionLocal
 
 TWSE_BASE = "https://www.twse.com.tw/rwd/zh"
+TAIFEX_BASE = "https://openapi.taifex.com.tw/v1"
+
+# FinMind TaiwanOptionDaily（各履約價 OI）仍可能延遲數日，保留回溯天數設定
+FINMIND_LOOKBACK_DAYS = 14
 
 # Python 3.14 對 TWSE 憑證（缺 Subject Key Identifier）驗證失敗，略過憑證驗證
 _ssl_ctx = ssl.create_default_context()
@@ -19,6 +23,16 @@ async def _get_json(url: str) -> dict:
     headers = {"User-Agent": "Mozilla/5.0 (compatible; LiquidChip/1.0)"}
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30), ssl=_ssl_ctx) as resp:
+            resp.raise_for_status()
+            return await resp.json(content_type=None)
+
+
+async def _get_taifex_json(path: str) -> list:
+    """打期交所 OpenAPI v1，回傳 list[dict]（當日盤後即有，無需 token）"""
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; LiquidChip/1.0)"}
+    url = f"{TAIFEX_BASE}{path}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
             resp.raise_for_status()
             return await resp.json(content_type=None)
 
@@ -205,71 +219,49 @@ async def fetch_margin():
         raise
 
 
-async def _get_finmind_futures_oi(futures_id: str, trade_date: str) -> dict:
-    """用 FinMind 取三大法人期貨未平倉量，回傳 {身份別: {long, short}}"""
-    import os
-    token = os.getenv("FINMIND_TOKEN", "")
-    url = "https://api.finmindtrade.com/api/v4/data"
-    params = {
-        "dataset": "TaiwanFuturesInstitutionalInvestors",
-        "data_id": futures_id,
-        "start_date": trade_date,
-        "token": token,
-    }
-    result = {}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-            body = await resp.json(content_type=None)
-            for row in body.get("data", []):
-                if row.get("date") == trade_date:
-                    name = row["institutional_investors"]
-                    result[name] = {
-                        "long": row.get("long_open_interest_balance_volume", 0),
-                        "short": row.get("short_open_interest_balance_volume", 0),
-                    }
-    return result
-
-
 async def fetch_futures_oi():
-    """用 FinMind 抓台指期三大法人未平倉（TX + MTX）
-    自動往前找最近有數據的交易日（最多 5 日）
+    """用 TAIFEX OpenAPI 抓台指期/小台期三大法人未平倉（當日盤後即有，無需 token）
+    ContractCode: 臺股期貨=TX, 小型臺指期貨=MTX
+    Item: 外資及陸資, 投信, 自營商
     """
-    from datetime import timedelta
-
     t0 = time.monotonic()
     try:
-        tx_data: dict = {}
-        trade_date: str = ""
-        for days_back in range(0, 5):
-            d = (date.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-            tx_data = await _get_finmind_futures_oi("TX", d)
-            if tx_data.get("外資", {}).get("long", 0) or tx_data.get("外資", {}).get("short", 0):
-                trade_date = d
-                break
+        rows = await _get_taifex_json("/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate")
+        if not rows:
+            raise RuntimeError("TAIFEX 期貨三大法人 API 回傳空資料")
 
-        if not trade_date:
-            raise RuntimeError("FinMind 近 5 日查無期貨OI數據")
+        trade_date_str = rows[0]["Date"]  # "YYYYMMDD"
+        db_date = datetime.strptime(trade_date_str, "%Y%m%d").date()
 
-        tx_foreign = tx_data.get("外資", {})
-        tx_trust   = tx_data.get("投信", {})
+        tx_foreign = tx_trust = mtx_foreign = None
+        for row in rows:
+            code = row["ContractCode"]
+            item = row["Item"]
+            if code == "臺股期貨" and item == "外資及陸資":
+                tx_foreign = row
+            elif code == "臺股期貨" and item == "投信":
+                tx_trust = row
+            elif code == "小型臺指期貨" and item == "外資及陸資":
+                mtx_foreign = row
 
-        # --- MTX 外資（同一交易日）---
-        mtx_data = await _get_finmind_futures_oi("MTX", trade_date)
-        mtx_foreign = mtx_data.get("外資", {})
+        if not tx_foreign:
+            raise RuntimeError(f"TAIFEX 找不到臺股期貨外資資料 (date={trade_date_str})")
 
-        db_date = datetime.strptime(trade_date, "%Y-%m-%d").date()
+        def _oi(row, side):
+            return int(_parse_num(row.get(f"OpenInterest({side})", "0"))) if row else 0
+
         with SessionLocal() as db:
             _upsert_chip(db, db_date, "0000",
-                         tx_foreign_long=tx_foreign.get("long", 0),
-                         tx_foreign_short=tx_foreign.get("short", 0),
-                         mtx_retail_long=mtx_foreign.get("long", 0),
-                         mtx_retail_short=mtx_foreign.get("short", 0),
-                         trust_tx_long=tx_trust.get("long", 0),
-                         trust_tx_short=tx_trust.get("short", 0))
+                         tx_foreign_long=_oi(tx_foreign, "Long"),
+                         tx_foreign_short=_oi(tx_foreign, "Short"),
+                         mtx_retail_long=_oi(mtx_foreign, "Long"),
+                         mtx_retail_short=_oi(mtx_foreign, "Short"),
+                         trust_tx_long=_oi(tx_trust, "Long"),
+                         trust_tx_short=_oi(tx_trust, "Short"))
             db.commit()
 
         elapsed = round(time.monotonic() - t0, 1)
-        print(f"[fetcher][futures_oi] done in {elapsed}s ({trade_date})")
+        print(f"[fetcher][futures_oi] done in {elapsed}s ({db_date})")
         return db_date
     except Exception:
         elapsed = round(time.monotonic() - t0, 1)
@@ -278,79 +270,76 @@ async def fetch_futures_oi():
 
 
 async def fetch_options_data():
-    """用 FinMind 抓選擇權三大法人 OI（外資淨金額）+ 各履約價 OI（P/C Ratio、壓力區）"""
+    """選擇權資料：
+    - 外資 Call/Put 淨部位金額 → TAIFEX OpenAPI（當日盤後即有，與法人買賣超同步）
+    - P/C Ratio、壓力區（各履約價 OI） → FinMind TaiwanOptionDaily（可能延遲數日）
+    db_date 以 TAIFEX 當日為準，P/C 為最近有資料日的 best-effort 填入。
+    """
     import os
     from datetime import timedelta
-    from app.models.database import DailyOption
 
     t0 = time.monotonic()
     try:
-        token = os.getenv("FINMIND_TOKEN", "")
-        url = "https://api.finmindtrade.com/api/v4/data"
+        # --- 1. 外資選擇權淨金額 from TAIFEX OpenAPI ---
+        opt_rows = await _get_taifex_json("/MarketDataOfMajorInstitutionalTradersDetailsOfCallsAndPutsBytheDate")
+        if not opt_rows:
+            raise RuntimeError("TAIFEX 選擇權三大法人 API 回傳空資料")
 
-        # 找最近有數據的交易日
-        trade_date = ""
-        inst_rows = []
-        async with aiohttp.ClientSession() as session:
-            for days_back in range(0, 5):
-                d = (date.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-                params = {"dataset": "TaiwanOptionInstitutionalInvestors",
-                          "data_id": "TXO", "start_date": d, "token": token}
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=20)) as r:
-                    body = await r.json(content_type=None)
-                    rows = [row for row in body.get("data", []) if row.get("date") == d]
-                    if rows:
-                        trade_date = d
-                        inst_rows = rows
-                        break
+        trade_date_str = opt_rows[0]["Date"]  # "YYYYMMDD"
+        db_date = datetime.strptime(trade_date_str, "%Y%m%d").date()
 
-        if not trade_date:
-            raise RuntimeError("FinMind 近 5 日查無選擇權數據")
-
-        # --- 外資選擇權淨金額（億元）---
-        # long_open_interest_balance_amount - short_open_interest_balance_amount = 淨部位金額（千元）
         foreign_call_net_yi = foreign_put_net_yi = 0.0
-        for row in inst_rows:
-            if row["institutional_investors"] != "外資":
+        for row in opt_rows:
+            if row["ContractCode"] != "臺指選擇權" or row["Item"] != "外資及陸資":
                 continue
-            net_kth = (row.get("long_open_interest_balance_amount", 0) or 0) - \
-                      (row.get("short_open_interest_balance_amount", 0) or 0)
-            if row["call_put"] == "買權":
+            long_kth  = _parse_num(row.get("ContractValueofOpenInterest(Long)(Thousands)", "0"))
+            short_kth = _parse_num(row.get("ContractValueofOpenInterest(Short)(Thousands)", "0"))
+            net_kth = long_kth - short_kth
+            if row["CallPut"] == "CALL":
                 foreign_call_net_yi = round(net_kth / 100000, 2)
-            elif row["call_put"] == "賣權":
+            elif row["CallPut"] == "PUT":
                 foreign_put_net_yi = round(net_kth / 100000, 2)
 
-        # --- 各履約價 OI（P/C、壓力區）---
+        # --- 2. P/C Ratio、壓力區 from FinMind（best-effort，可能落後數日）---
+        token = os.getenv("FINMIND_TOKEN", "")
+        finmind_url = "https://api.finmindtrade.com/api/v4/data"
         pc_ratio = call_max_strike = put_max_strike = None
         call_total_oi = put_total_oi = 0
+        finmind_date = ""
+
         async with aiohttp.ClientSession() as session:
-            params = {"dataset": "TaiwanOptionDaily", "data_id": "TXO",
-                      "start_date": trade_date, "token": token}
-            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as r:
-                body = await r.json(content_type=None)
-                all_rows = body.get("data", [])
+            for days_back in range(0, FINMIND_LOOKBACK_DAYS):
+                d = (date.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+                params = {"dataset": "TaiwanOptionDaily", "data_id": "TXO",
+                          "start_date": d, "token": token}
+                async with session.get(finmind_url, params=params,
+                                       timeout=aiohttp.ClientTimeout(total=30)) as r:
+                    body = await r.json(content_type=None)
+                    all_rows = [row for row in body.get("data", []) if row.get("date") == d]
+                    if all_rows:
+                        finmind_date = d
+                        break
 
-        # 近月合約 position session
-        contracts = sorted(set(row["contract_date"] for row in all_rows))
-        near_month = contracts[0] if contracts else None
-        if near_month:
-            near = [r for r in all_rows
-                    if r["contract_date"] == near_month
-                    and r["trading_session"] == "position"
-                    and r["open_interest"] > 0
-                    and r["date"] == trade_date]
-            calls = [r for r in near if r["call_put"] == "call"]
-            puts  = [r for r in near if r["call_put"] == "put"]
-            call_total_oi = sum(r["open_interest"] for r in calls)
-            put_total_oi  = sum(r["open_interest"] for r in puts)
-            if call_total_oi:
-                pc_ratio = round(put_total_oi / call_total_oi * 100, 1)
-            if calls:
-                call_max_strike = max(calls, key=lambda x: x["open_interest"])["strike_price"]
-            if puts:
-                put_max_strike  = max(puts,  key=lambda x: x["open_interest"])["strike_price"]
+        if finmind_date:
+            contracts = sorted(set(row["contract_date"] for row in all_rows))
+            near_month = contracts[0] if contracts else None
+            if near_month:
+                near = [r for r in all_rows
+                        if r["contract_date"] == near_month
+                        and r["trading_session"] == "position"
+                        and r["open_interest"] > 0
+                        and r["date"] == finmind_date]
+                calls = [r for r in near if r["call_put"] == "call"]
+                puts  = [r for r in near if r["call_put"] == "put"]
+                call_total_oi = sum(r["open_interest"] for r in calls)
+                put_total_oi  = sum(r["open_interest"] for r in puts)
+                if call_total_oi:
+                    pc_ratio = round(put_total_oi / call_total_oi * 100, 1)
+                if calls:
+                    call_max_strike = max(calls, key=lambda x: x["open_interest"])["strike_price"]
+                if puts:
+                    put_max_strike  = max(puts,  key=lambda x: x["open_interest"])["strike_price"]
 
-        db_date = datetime.strptime(trade_date, "%Y-%m-%d").date()
         with SessionLocal() as db:
             existing = db.execute(
                 text("SELECT date FROM daily_options WHERE date=:d"), {"d": db_date}
@@ -378,7 +367,7 @@ async def fetch_options_data():
             db.commit()
 
         elapsed = round(time.monotonic() - t0, 1)
-        print(f"[fetcher][options_data] done in {elapsed}s ({trade_date})")
+        print(f"[fetcher][options_data] TAIFEX={db_date} FinMind_PC={finmind_date or 'n/a'} in {elapsed}s")
         return db_date
     except Exception:
         elapsed = round(time.monotonic() - t0, 1)

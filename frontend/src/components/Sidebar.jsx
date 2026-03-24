@@ -48,8 +48,20 @@ export default function Sidebar() {
             {health.status === 'healthy' ? 'API 連線正常' : health.status === 'loading' ? '連線中...' : 'API 連線失敗'}
           </span>
         </div>
-        <div className="text-xs text-slate-400 mt-1 ml-5">
-          最後更新: {health.last_update ?? '—'}
+        <div className="text-xs text-slate-400 mt-1 ml-5 space-y-0.5">
+          {health.last_institutional &&
+          health.last_margin &&
+          health.last_institutional !== health.last_margin ? (
+            <>
+              <div>法人: {health.last_institutional}</div>
+              <div>融資券: {health.last_margin}</div>
+            </>
+          ) : (
+            <div>
+              最後更新:{' '}
+              {health.last_update ?? health.last_institutional ?? health.last_margin ?? '—'}
+            </div>
+          )}
         </div>
       </div>
     </div>

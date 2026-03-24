@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { Search, Loader2, Users } from 'lucide-react'
 
 // FinMind 回傳單位是「股」，除以 1000 才是「張」
@@ -12,13 +12,13 @@ function fmtZhang(zhang) {
 function Cell({ val }) {
   const z = toZhang(val)
   const color = z > 0 ? 'text-red-500' : z < 0 ? 'text-emerald-500' : 'text-slate-400'
-  return <td className={`text-right tabular-nums text-sm py-2 px-2 ${color}`}>{fmtZhang(z)}</td>
+  return <td className={`text-right tabular-nums text-sm py-2 px-2 whitespace-nowrap ${color}`}>{fmtZhang(z)}</td>
 }
 
 function TotalCell({ row }) {
   const z = toZhang(row.foreign + row.trust + row.dealer)
   const color = z > 0 ? 'text-red-600 font-bold' : z < 0 ? 'text-emerald-600 font-bold' : 'text-slate-400'
-  return <td className={`text-right tabular-nums text-sm py-2 px-2 ${color}`}>{fmtZhang(z)}</td>
+  return <td className={`text-right tabular-nums text-sm py-2 px-2 whitespace-nowrap ${color}`}>{fmtZhang(z)}</td>
 }
 
 function SumRow({ rows }) {
@@ -30,11 +30,11 @@ function SumRow({ rows }) {
   const col = v => v > 0 ? 'text-red-500' : v < 0 ? 'text-emerald-500' : 'text-slate-400'
   return (
     <tr className="border-t-2 border-slate-200 bg-slate-50/60">
-      <td className="text-xs text-slate-500 font-semibold py-2 px-2">近10日合計</td>
-      <td className={`text-right tabular-nums text-sm py-2 px-2 font-semibold ${col(fz)}`}>{fmtZhang(fz)}</td>
-      <td className={`text-right tabular-nums text-sm py-2 px-2 font-semibold ${col(tz)}`}>{fmtZhang(tz)}</td>
-      <td className={`text-right tabular-nums text-sm py-2 px-2 font-semibold ${col(dz)}`}>{fmtZhang(dz)}</td>
-      <td className={`text-right tabular-nums text-sm py-2 px-2 font-bold ${col(totZ)}`}>{fmtZhang(totZ)}</td>
+      <td className="text-xs text-slate-500 font-semibold py-2 px-2 whitespace-nowrap">近10日合計</td>
+      <td className={`text-right tabular-nums text-sm py-2 px-2 font-semibold whitespace-nowrap ${col(fz)}`}>{fmtZhang(fz)}</td>
+      <td className={`text-right tabular-nums text-sm py-2 px-2 font-semibold whitespace-nowrap ${col(tz)}`}>{fmtZhang(tz)}</td>
+      <td className={`text-right tabular-nums text-sm py-2 px-2 font-semibold whitespace-nowrap ${col(dz)}`}>{fmtZhang(dz)}</td>
+      <td className={`text-right tabular-nums text-sm py-2 px-2 font-bold whitespace-nowrap ${col(totZ)}`}>{fmtZhang(totZ)}</td>
     </tr>
   )
 }
@@ -166,7 +166,11 @@ export default function Widget_Concentration() {
     } catch { setError('搜尋失敗') }
   }, [inputVal, doSearch])
 
-  const recent10 = data?.institutional.slice(-10) ?? []
+  // 近 10 個交易日仍取 API 陣列末段（日期升序），表格改為日期降序顯示（最新在上）
+  const recent10 = useMemo(() => {
+    if (!data?.institutional?.length) return []
+    return [...data.institutional.slice(-10)].reverse()
+  }, [data])
 
   return (
     <div className="lg:col-span-3 glass-card rounded-[2rem] p-6 flex flex-col gap-5">
@@ -232,21 +236,28 @@ export default function Widget_Concentration() {
               <span className="ml-2 text-xs font-normal text-slate-400">單位：張</span>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
+            <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+              <table className="w-full min-w-[32rem] table-fixed border-collapse">
+                <colgroup>
+                  <col style={{ width: '4.5rem' }} />
+                  <col />
+                  <col />
+                  <col />
+                  <col />
+                </colgroup>
                 <thead>
                   <tr className="border-b border-slate-200">
-                    <th className="text-left text-xs text-slate-400 font-medium py-1.5 px-2">日期</th>
-                    <th className="text-right text-xs font-medium py-1.5 px-2" style={{ color: '#3b82f6' }}>外資</th>
-                    <th className="text-right text-xs font-medium py-1.5 px-2" style={{ color: '#a855f7' }}>投信</th>
-                    <th className="text-right text-xs font-medium py-1.5 px-2" style={{ color: '#f97316' }}>自營</th>
-                    <th className="text-right text-xs text-slate-400 font-medium py-1.5 px-2">合計</th>
+                    <th className="text-left text-xs text-slate-400 font-medium py-1.5 px-2 whitespace-nowrap w-[4.5rem] min-w-[4.5rem]">日期</th>
+                    <th className="text-right text-xs font-medium py-1.5 px-2 whitespace-nowrap" style={{ color: '#3b82f6' }}>外資</th>
+                    <th className="text-right text-xs font-medium py-1.5 px-2 whitespace-nowrap" style={{ color: '#a855f7' }}>投信</th>
+                    <th className="text-right text-xs font-medium py-1.5 px-2 whitespace-nowrap" style={{ color: '#f97316' }}>自營</th>
+                    <th className="text-right text-xs text-slate-400 font-medium py-1.5 px-2 whitespace-nowrap">合計</th>
                   </tr>
                 </thead>
                 <tbody>
                   {recent10.map((row, i) => (
                     <tr key={row.date} className={i % 2 === 0 ? 'bg-transparent' : 'bg-slate-50/40'}>
-                      <td className="text-xs text-slate-500 py-2 px-2 tabular-nums">
+                      <td className="text-xs text-slate-500 py-2 px-2 tabular-nums whitespace-nowrap align-top">
                         {row.date.slice(5)}
                       </td>
                       <Cell val={row.foreign} />

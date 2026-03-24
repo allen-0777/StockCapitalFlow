@@ -88,6 +88,8 @@ FinMind 免費 Token 申請：至 [finmindtrade.com](https://finmindtrade.com/) 
 | GET | `/api/v1/users/1/watchlist` | 觀察清單 |
 | POST | `/api/v1/users/1/watchlist` | 新增觀察股 |
 | DELETE | `/api/v1/users/1/watchlist/{id}` | 移除觀察股 |
+| POST | `/api/v1/admin/trigger/{job}?secret=&notify=` | 排程觸發爬蟲（`job`: institutional / futures / margin；`notify=true` 最後一次重試會發 Telegram） |
+| POST | `/api/v1/admin/daily-digest?secret=` | 每日彙整推播（`TELEGRAM_*` 需設定） |
 
 ## 資料更新排程
 

@@ -49,17 +49,32 @@ def market_summary(db: Session = Depends(get_db)):
         """)
     ).fetchone()
 
-    # 融資券資料：取有 margin_long 的最新一筆
-    margin_row = db.execute(
-        text("""
-            SELECT date, margin_long, margin_short
-            FROM daily_chips
-            WHERE stock_id = '0000'
-              AND margin_long IS NOT NULL
-            ORDER BY date DESC
-            LIMIT 1
-        """)
-    ).fetchone()
+    # 融資券：優先與「法人列」同日（避免畫面上法人日與融資券日差一天）；
+    # 若該日尚無融資券欄位，再退回「有 margin 的最新一筆」（證交所兩支 API 的 date 常不同步）
+    margin_row = None
+    if inst_row:
+        margin_row = db.execute(
+            text("""
+                SELECT date, margin_long, margin_short
+                FROM daily_chips
+                WHERE stock_id = '0000'
+                  AND date = :d
+                  AND margin_long IS NOT NULL
+                LIMIT 1
+            """),
+            {"d": inst_row.date},
+        ).fetchone()
+    if margin_row is None:
+        margin_row = db.execute(
+            text("""
+                SELECT date, margin_long, margin_short
+                FROM daily_chips
+                WHERE stock_id = '0000'
+                  AND margin_long IS NOT NULL
+                ORDER BY date DESC
+                LIMIT 1
+            """)
+        ).fetchone()
 
     # 期貨未平倉資料：取最近 5 日（含歷史，用於 Sparkline + 趨勢）
     futures_rows = db.execute(
@@ -110,6 +125,12 @@ def market_summary(db: Session = Depends(get_db)):
             for r in reversed(futures_rows)   # 舊→新，方便前端畫趨勢線
         ],
     }
+
+    opt_row = db.execute(
+        text("SELECT date FROM daily_options ORDER BY date DESC LIMIT 1")
+    ).fetchone()
+    result["options_date"] = str(opt_row.date) if opt_row else None
+
     cache_set("market_summary", result)
     return result
 

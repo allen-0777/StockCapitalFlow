@@ -1,3 +1,6 @@
+import { useState, useRef, useEffect } from 'react'
+import { Info } from 'lucide-react'
+
 export default function Widget3_LiquidGauge({ data }) {
   if (!data) {
     return (
@@ -16,7 +19,6 @@ export default function Widget3_LiquidGauge({ data }) {
   const shortNorm = Math.max(-1, Math.min(1, shortZhang / 15000))
   const sentiment = longNorm - shortNorm  // [-2, +2]
   const bullPct = Math.min(100, Math.max(0, Math.round(50 + sentiment * 25)))
-  const isBull = bullPct >= 50
 
   // 標籤
   let label = '中性盤整'
@@ -32,15 +34,75 @@ export default function Widget3_LiquidGauge({ data }) {
     return `${v >= 0 ? '+' : ''}${wan.toFixed(1)}萬張`
   }
 
-  return (
-    <div className="glass-card rounded-[2rem] p-6 flex flex-col items-center justify-center relative">
-      <h2 className="text-lg font-bold text-slate-800 absolute top-6 left-6">大盤主力水位</h2>
-      <p className="text-xs text-slate-400 absolute top-11 left-6">
+  const dateMismatch =
+    data.institutional_date &&
+    data.margin_date &&
+    data.institutional_date !== data.margin_date
+
+  const [infoOpen, setInfoOpen] = useState(false)
+  const infoAnchorRef = useRef(null)
+
+  useEffect(() => {
+    if (!dateMismatch || !infoOpen) return
+
+    const onPointerDown = (e) => {
+      const el = infoAnchorRef.current
+      if (el && !el.contains(e.target)) {
+        setInfoOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [dateMismatch, infoOpen])
+
+  const titleBlock = (
+    <div
+      className={`min-w-0 space-y-1.5 pr-1 ${dateMismatch ? 'flex-1' : ''}`}
+    >
+      <h2 className="text-lg font-bold text-slate-800 break-words">大盤主力水位</h2>
+      <p className="text-xs text-slate-500 leading-relaxed break-words">
         {data.margin_date ?? data.date} 融資/融券增減
       </p>
+    </div>
+  )
+
+  return (
+    <div className="glass-card rounded-[2rem] p-6 sm:p-7 flex flex-col gap-6 w-full min-w-0">
+      <header className="w-full shrink-0 min-w-0">
+        {dateMismatch ? (
+          <div ref={infoAnchorRef} className="w-full min-w-0 space-y-2">
+            {/* 僅圖示與標題同列；說明放下一列全寬，避免窄螢幕左欄被壓成單字換行 */}
+            <div className="flex justify-between items-start gap-2">
+              {titleBlock}
+              <button
+                type="button"
+                onClick={() => setInfoOpen((v) => !v)}
+                aria-expanded={infoOpen}
+                aria-controls="liquid-gauge-date-note"
+                title="資料日說明"
+                className="shrink-0 rounded-full p-1.5 text-amber-600 hover:bg-amber-100/70 active:bg-amber-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/80"
+              >
+                <Info className="w-[18px] h-[18px] sm:w-5 sm:h-5" strokeWidth={2.25} aria-hidden />
+              </button>
+            </div>
+            {infoOpen && (
+              <p
+                id="liquid-gauge-date-note"
+                role="note"
+                className="w-full text-left text-[10px] sm:text-[11px] text-amber-900/90 leading-relaxed rounded-xl bg-amber-50/90 border border-amber-200/70 px-3 py-2.5 shadow-sm break-words"
+              >
+                與法人卡 {data.institutional_date} 資料日不同（證交所兩類 API 更新節奏常不一致）
+              </p>
+            )}
+          </div>
+        ) : (
+          titleBlock
+        )}
+      </header>
 
       {/* 液態球 */}
-      <div className="relative w-48 h-48 mt-8 rounded-full border-4 border-white/50 bg-white/20 shadow-[inset_0_-10px_30px_rgba(59,130,246,0.2)] overflow-hidden flex items-center justify-center">
+      <div className="relative w-48 h-48 mx-auto shrink-0 rounded-full border-4 border-white/50 bg-white/20 shadow-[inset_0_-10px_30px_rgba(59,130,246,0.2)] overflow-hidden flex items-center justify-center">
         <div
           className="absolute bottom-0 w-[200%] h-[200%] bg-gradient-to-t from-blue-400/80 to-cyan-300/80 rounded-[40%]"
           style={{
@@ -64,7 +126,7 @@ export default function Widget3_LiquidGauge({ data }) {
       </div>
 
       {/* 融資/融券增減 */}
-      <div className="mt-8 grid grid-cols-2 gap-4 w-full text-center">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 w-full text-center shrink-0 pt-1">
         <div className="bg-white/40 rounded-2xl py-3">
           <div className="text-xs text-slate-500 mb-1">融資增減</div>
           <div className={`font-bold text-sm ${longYi >= 0 ? 'text-red-500' : 'text-green-500'}`}>

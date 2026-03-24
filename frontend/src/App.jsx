@@ -10,12 +10,14 @@ import Widget_BrokerFlow from './components/Widget_BrokerFlow'
 import Widget_Concentration from './components/Widget_Concentration'
 import Widget4_FuturesOI from './components/Widget4_FuturesOI'
 import Widget5_Options from './components/Widget5_Options'
+import MarketDataFreshnessBar from './components/MarketDataFreshnessBar'
 import useStore from './store/useStore'
 
 export default function App() {
   const { setWatchlist, activeTab } = useStore()
   const [marketData, setMarketData] = useState(null)
   const [watchlist, setWatchlistLocal] = useState([])
+  const [optionsRefreshNonce, setOptionsRefreshNonce] = useState(0)
 
   const fetchMarket = useCallback(async () => {
     try {
@@ -38,6 +40,7 @@ export default function App() {
   const handleRefresh = useCallback(() => {
     fetchMarket()
     fetchWatchlist()
+    setOptionsRefreshNonce((n) => n + 1)
   }, [fetchMarket, fetchWatchlist])
 
   useEffect(() => {
@@ -64,11 +67,12 @@ export default function App() {
           <div className="lg:col-span-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto pb-8 z-10 pr-2 custom-scrollbar">
             {activeTab === 'overview' && (
               <>
+                <MarketDataFreshnessBar data={marketData} />
                 <Widget1_Institutional data={marketData} />
                 <Widget2_Watchlist watchlist={watchlist} onRefresh={fetchWatchlist} />
                 <Widget3_LiquidGauge data={marketData} />
                 <Widget4_FuturesOI data={marketData} />
-                <Widget5_Options />
+                <Widget5_Options refreshNonce={optionsRefreshNonce} />
               </>
             )}
             {activeTab === 'institutional' && (
