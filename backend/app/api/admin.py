@@ -1,16 +1,17 @@
 """
 Admin trigger endpoint — 供 GitHub Actions 排程呼叫，取代 APScheduler。
-POST /api/v1/admin/trigger/{job}?secret=XXX&notify=true
+POST /api/v1/admin/trigger/{job}?secret=XXX&notify=true&force=true
 POST /api/v1/admin/daily-digest?secret=XXX
 """
 import os
 import time
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import text as sa_text
 
 from app.services import fetcher as _fetcher
 from app.services.trading_calendar import is_trading_day, latest_trading_day
-from app.models.database import cache_clear, get_db
+from app.models.database import cache_clear, get_db, SessionLocal
 from app.services.notification import (
     STEP_OK,
     STEP_ERROR,
@@ -30,6 +31,36 @@ JOB_STEPS: dict[str, tuple[str, ...]] = {
     "margin": ("fetch_margin",),
 }
 
+# 每個 job 對應要檢查的欄位（stock_id='0000'），若已有值代表資料已抓過
+JOB_CHECK_COL: dict[str, str] = {
+    "institutional": "foreign_buy",
+    "futures": "tx_foreign_long",
+    "margin": "margin_long",
+}
+
+
+def _job_already_done(job: str, expected) -> bool:
+    """檢查 DB 裡是否已有當天資料，有的話就不用重抓"""
+    col = JOB_CHECK_COL.get(job)
+    if not col:
+        return False
+    with SessionLocal() as db:
+        row = db.execute(
+            sa_text(f"SELECT {col} FROM daily_chips WHERE date=:d AND stock_id='0000'"),
+            {"d": expected}
+        ).fetchone()
+        if row is None or row[0] is None:
+            return False
+        # futures 還要確認 daily_options 有資料
+        if job == "futures":
+            opt = db.execute(
+                sa_text("SELECT date FROM daily_options WHERE date=:d"),
+                {"d": expected}
+            ).fetchone()
+            if opt is None:
+                return False
+        return True
+
 
 def _summarize_job_status(steps: list[dict]) -> str:
     n_ok = sum(1 for s in steps if s.get("status") == STEP_OK)
@@ -42,7 +73,7 @@ def _summarize_job_status(steps: list[dict]) -> str:
 
 
 @router.post("/api/v1/admin/trigger/{job}")
-async def trigger_job(job: str, secret: str = "", notify: bool = False):
+async def trigger_job(job: str, secret: str = "", notify: bool = False, force: bool = False):
     expected_secret = os.getenv("TRIGGER_SECRET", "")
     if not expected_secret or secret != expected_secret:
         raise HTTPException(status_code=403, detail="Invalid secret")
@@ -54,6 +85,20 @@ async def trigger_job(job: str, secret: str = "", notify: bool = False):
         return {"status": "skipped", "reason": "非台股交易日"}
 
     expected = latest_trading_day()
+
+    # 若資料已存在，直接回傳成功（除非 force=true）
+    if not force and _job_already_done(job, expected):
+        print(f"[admin] {job} already done for {expected}, skipping")
+        return {
+            "status": JOB_OK,
+            "job": job,
+            "expected_date": str(expected),
+            "got_date": str(expected),
+            "date_match": True,
+            "steps": [{"fn": "cache_hit", "status": STEP_OK, "duration_s": 0}],
+            "cached": True,
+        }
+
     steps: list[dict] = []
     got_date = None
 
