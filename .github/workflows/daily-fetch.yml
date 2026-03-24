@@ -2,7 +2,7 @@ name: Daily Market Data Fetch
 
 on:
   schedule:
-    - cron: '30 9 * * 1-5'   # 17:30 CST — 喚醒後並行跑三個 job
+    - cron: '30 9 * * 1-5'   # 17:30 CST — 依序跑三個 job
     - cron: '0 14 * * *'     # 22:00 CST — 每日 Telegram 彙整（含假日）
   workflow_dispatch:
     inputs:
@@ -43,7 +43,7 @@ jobs:
           done
           echo "WARNING: backend did not respond after 20 attempts, proceeding anyway"
 
-# ── 2. 三個資料 job 並行（等 wake 完成後同時啟動）─────────────
+# ── 2. 三個資料 job 序列執行（避免 Render 免費方案併發超時）────
 
   institutional:
     needs: [wake]
@@ -82,9 +82,9 @@ jobs:
           exit 0
 
   futures:
-    needs: [wake]
+    needs: [institutional]
     if: |
-      always() && needs.wake.result != 'cancelled' &&
+      always() && needs.institutional.result != 'cancelled' &&
       (github.event.schedule == '30 9 * * 1-5' ||
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.job == 'futures' || github.event.inputs.job == 'all')))
@@ -118,9 +118,9 @@ jobs:
           exit 0
 
   margin:
-    needs: [wake]
+    needs: [futures]
     if: |
-      always() && needs.wake.result != 'cancelled' &&
+      always() && needs.futures.result != 'cancelled' &&
       (github.event.schedule == '30 9 * * 1-5' ||
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.job == 'margin' || github.event.inputs.job == 'all')))
