@@ -1,8 +1,10 @@
 """
 Admin trigger endpoint — 供 GitHub Actions 排程呼叫，取代 APScheduler。
-POST /api/v1/admin/trigger/{job}?secret=XXX&notify=true&force=true
+POST /api/v1/admin/trigger/{job}?secret=XXX  → 立即回傳，背景執行
+GET  /api/v1/admin/job-status/{job}?secret=XXX → polling 查詢結果
 POST /api/v1/admin/daily-digest?secret=XXX
 """
+import asyncio
 import os
 import time
 from fastapi import APIRouter, HTTPException, Depends
@@ -38,6 +40,9 @@ JOB_CHECK_COL: dict[str, str] = {
     "margin": "margin_long",
 }
 
+# In-memory job status store (process-level, resets on deploy)
+_job_results: dict[str, dict] = {}
+
 
 def _job_already_done(job: str, expected) -> bool:
     """檢查 DB 裡是否已有當天資料，有的話就不用重抓"""
@@ -51,7 +56,6 @@ def _job_already_done(job: str, expected) -> bool:
         ).fetchone()
         if row is None or row[0] is None:
             return False
-        # futures 還要確認 daily_options 有資料
         if job == "futures":
             opt = db.execute(
                 sa_text("SELECT date FROM daily_options WHERE date=:d"),
@@ -72,6 +76,58 @@ def _summarize_job_status(steps: list[dict]) -> str:
     return JOB_PARTIAL
 
 
+async def _run_job(job: str, notify: bool):
+    """背景執行 job，結果存到 _job_results"""
+    expected = latest_trading_day()
+    steps: list[dict] = []
+    got_date = None
+
+    for fn_name in JOB_STEPS[job]:
+        fn = getattr(_fetcher, fn_name)
+        t0 = time.monotonic()
+        step: dict = {
+            "fn": fn_name,
+            "status": None,
+            "duration_s": None,
+            "error": None,
+            "date": None,
+        }
+        try:
+            result = await fn()
+            step["status"] = STEP_OK
+            step["duration_s"] = round(time.monotonic() - t0, 1)
+            if result is not None:
+                step["date"] = str(result)
+                got_date = result
+        except Exception as e:
+            step["status"] = STEP_ERROR
+            step["duration_s"] = round(time.monotonic() - t0, 1)
+            step["error"] = str(e)
+        steps.append(step)
+
+    job_status = _summarize_job_status(steps)
+    date_match = got_date == expected if got_date else False
+    cache_clear()
+
+    result = {
+        "status": job_status,
+        "job": job,
+        "expected_date": str(expected),
+        "got_date": str(got_date) if got_date else None,
+        "date_match": date_match,
+        "steps": steps,
+    }
+    _job_results[job] = result
+
+    if notify:
+        try:
+            await send_job_result(job, steps, got_date, expected)
+        except Exception as e:
+            print(f"[admin] notify error: {e}")
+
+    print(f"[admin] {job} finished: {job_status} date_match={date_match}")
+
+
 @router.post("/api/v1/admin/trigger/{job}")
 async def trigger_job(job: str, secret: str = "", notify: bool = False, force: bool = False):
     expected_secret = os.getenv("TRIGGER_SECRET", "")
@@ -89,7 +145,7 @@ async def trigger_job(job: str, secret: str = "", notify: bool = False, force: b
     # 若資料已存在，直接回傳成功（除非 force=true）
     if not force and _job_already_done(job, expected):
         print(f"[admin] {job} already done for {expected}, skipping")
-        return {
+        result = {
             "status": JOB_OK,
             "job": job,
             "expected_date": str(expected),
@@ -98,50 +154,30 @@ async def trigger_job(job: str, secret: str = "", notify: bool = False, force: b
             "steps": [{"fn": "cache_hit", "status": STEP_OK, "duration_s": 0}],
             "cached": True,
         }
+        _job_results[job] = result
+        return result
 
-    steps: list[dict] = []
-    got_date = None
+    # 非同步背景執行，立即回傳 accepted
+    _job_results[job] = {"status": "running", "job": job, "expected_date": str(expected)}
+    asyncio.create_task(_run_job(job, notify))
 
-    for fn_name in JOB_STEPS[job]:
-        fn = getattr(_fetcher, fn_name)
-        t0 = time.monotonic()
-        step: dict = {
-            "fn": fn_name,
-            "status": None,
-            "duration_s": None,
-            "error": None,
-            "date": None,
-            "rows": None,
-        }
-        try:
-            result = await fn()
-            step["status"] = STEP_OK
-            step["duration_s"] = round(time.monotonic() - t0, 1)
-            if result is not None:
-                step["date"] = str(result)
-                got_date = result
-        except Exception as e:
-            step["status"] = STEP_ERROR
-            step["duration_s"] = round(time.monotonic() - t0, 1)
-            step["error"] = str(e)
-        steps.append(step)
+    return {"status": "accepted", "job": job, "expected_date": str(expected)}
 
-    job_status = _summarize_job_status(steps)
-    date_match = got_date == expected if got_date else False
 
-    cache_clear()
+@router.get("/api/v1/admin/job-status/{job}")
+async def job_status(job: str, secret: str = ""):
+    """Polling endpoint — workflow 用來查背景 job 是否完成"""
+    expected_secret = os.getenv("TRIGGER_SECRET", "")
+    if not expected_secret or secret != expected_secret:
+        raise HTTPException(status_code=403, detail="Invalid secret")
 
-    if notify:
-        await send_job_result(job, steps, got_date, expected)
+    if job not in JOB_STEPS:
+        raise HTTPException(status_code=404, detail=f"Unknown job: {job}")
 
-    return {
-        "status": job_status,
-        "job": job,
-        "expected_date": str(expected),
-        "got_date": str(got_date) if got_date else None,
-        "date_match": date_match,
-        "steps": steps,
-    }
+    result = _job_results.get(job)
+    if not result:
+        return {"status": "unknown", "job": job}
+    return result
 
 
 @router.post("/api/v1/admin/daily-digest")
