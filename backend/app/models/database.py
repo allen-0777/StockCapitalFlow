@@ -79,6 +79,15 @@ class DailyChip(Base):
     mtx_retail_short = Column(Integer, nullable=True)  # 小台外資空方未平倉口數
     trust_tx_long = Column(Integer, nullable=True)     # 台指期投信多方未平倉口數
     trust_tx_short = Column(Integer, nullable=True)    # 台指期投信空方未平倉口數
+    market_volume = Column(Numeric, nullable=True)     # 大盤成交金額（億元）
+
+
+class DailyExchangeRate(Base):
+    """每日台幣匯率（台銀牌告）"""
+    __tablename__ = "daily_exchange_rate"
+    date = Column(Date, primary_key=True)
+    usd_buy = Column(Numeric, nullable=True)    # 美金現金買入
+    usd_sell = Column(Numeric, nullable=True)   # 美金現金賣出
 
 
 class DailyOption(Base):
@@ -122,7 +131,8 @@ def init_db():
         # 向舊資料庫補欄位（ALTER TABLE 對已存在欄位會拋例外，直接忽略）
         for col in ["tx_foreign_long INTEGER", "tx_foreign_short INTEGER",
                     "mtx_retail_long INTEGER", "mtx_retail_short INTEGER",
-                    "trust_tx_long INTEGER", "trust_tx_short INTEGER"]:
+                    "trust_tx_long INTEGER", "trust_tx_short INTEGER",
+                    "market_volume NUMERIC"]:
             try:
                 db.execute(text(f"ALTER TABLE daily_chips ADD COLUMN {col}"))
                 db.commit()

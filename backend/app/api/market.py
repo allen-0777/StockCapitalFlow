@@ -40,7 +40,7 @@ def market_summary(db: Session = Depends(get_db)):
     # 法人資料：取有 foreign_buy 的最新一筆
     inst_row = db.execute(
         text("""
-            SELECT date, foreign_buy, trust_buy, dealer_buy
+            SELECT date, foreign_buy, trust_buy, dealer_buy, market_volume
             FROM daily_chips
             WHERE stock_id = '0000'
               AND foreign_buy IS NOT NULL
@@ -131,6 +131,32 @@ def market_summary(db: Session = Depends(get_db)):
     ).fetchone()
     result["options_date"] = str(opt_row.date) if opt_row else None
 
+    # 大盤成交量
+    result["volume_yi"] = round(float(inst_row.market_volume), 2) if inst_row and inst_row.market_volume else None
+
+    # 近 20 日成交量歷史（用於 bar chart）
+    vol_rows = db.execute(
+        text("""
+            SELECT date, market_volume FROM daily_chips
+            WHERE stock_id = '0000' AND market_volume IS NOT NULL
+            ORDER BY date DESC LIMIT 20
+        """)
+    ).fetchall()
+    result["volume_history"] = [
+        {"date": str(r.date), "volume_yi": round(float(r.market_volume), 2)}
+        for r in reversed(vol_rows)
+    ]
+
+    # 匯率
+    fx_row = db.execute(
+        text("SELECT date, usd_buy, usd_sell FROM daily_exchange_rate ORDER BY date DESC LIMIT 1")
+    ).fetchone()
+    result["exchange_rate"] = {
+        "date": str(fx_row.date),
+        "usd_buy": float(fx_row.usd_buy),
+        "usd_sell": float(fx_row.usd_sell),
+    } if fx_row else None
+
     cache_set("market_summary", result)
     return result
 
@@ -166,4 +192,30 @@ def market_options(db: Session = Depends(get_db)):
         "foreign_put_net_yi":  float(row.foreign_put_net_yi)  if row.foreign_put_net_yi  is not None else None,
     }
     cache_set("market_options", result)
+    return result
+
+
+@router.get("/api/v1/market/exchange-rate")
+def exchange_rate_history(
+    days: int = 60,
+    db: Session = Depends(get_db),
+):
+    cache_key = f"exchange_rate:{days}"
+    cached = cache_get(cache_key, ttl_seconds=3600)
+    if cached is not None:
+        return cached
+
+    rows = db.execute(
+        text("""
+            SELECT date, usd_buy, usd_sell FROM daily_exchange_rate
+            ORDER BY date DESC LIMIT :days
+        """),
+        {"days": days},
+    ).fetchall()
+
+    result = [
+        {"date": str(r.date), "usd_buy": float(r.usd_buy), "usd_sell": float(r.usd_sell)}
+        for r in reversed(rows)
+    ]
+    cache_set(cache_key, result)
     return result

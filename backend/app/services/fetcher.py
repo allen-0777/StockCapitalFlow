@@ -373,3 +373,90 @@ async def fetch_options_data():
         elapsed = round(time.monotonic() - t0, 1)
         print(f"[fetcher][options_data] ERROR in {elapsed}s")
         raise
+
+
+async def fetch_turnover():
+    """抓大盤成交金額（億元） → stock_id='0000' market_volume 欄位"""
+    t0 = time.monotonic()
+    try:
+        now_str = date.today().strftime("%Y%m%d")
+        data = await _get_json_with_retry(
+            f"{TWSE_BASE}/afterTrading/FMTQIK?date={now_str}&response=json"
+        )
+        if data.get("stat") != "OK" or not data.get("data"):
+            raise RuntimeError(f"TWSE FMTQIK stat={data.get('stat')}")
+
+        trading_date = _parse_twse_date(data)
+        # 取最後一筆（最新交易日）
+        last_row = data["data"][-1]
+        # 成交金額欄位（元），轉億
+        volume_yi = round(_parse_num(last_row[2]) / 1e8, 2)
+
+        with SessionLocal() as db:
+            _upsert_chip(db, trading_date, "0000", market_volume=volume_yi)
+            db.commit()
+
+        elapsed = round(time.monotonic() - t0, 1)
+        print(f"[fetcher][turnover] {volume_yi}億 in {elapsed}s ({trading_date})")
+        return trading_date
+    except Exception:
+        elapsed = round(time.monotonic() - t0, 1)
+        print(f"[fetcher][turnover] ERROR in {elapsed}s")
+        raise
+
+
+async def fetch_exchange_rate():
+    """抓台銀美金現金買入/賣出匯率"""
+    import re
+    from bs4 import BeautifulSoup
+
+    t0 = time.monotonic()
+    try:
+        url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; LiquidChip/1.0)"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers,
+                                   timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                html_text = await resp.text()
+
+        soup = BeautifulSoup(html_text, "html.parser")
+        table = soup.find("table", attrs={"title": "牌告匯率"})
+        if not table:
+            raise RuntimeError("找不到台銀牌告匯率表格")
+
+        first_row = table.find("tbody").find("tr")  # 第一列 = 美金
+        buy_td = first_row.find("td", attrs={"data-table": "本行現金買入"})
+        sell_td = first_row.find("td", attrs={"data-table": "本行現金賣出"})
+
+        if not buy_td or not sell_td:
+            raise RuntimeError("找不到美金匯率欄位")
+
+        usd_buy = float(buy_td.get_text(strip=True))
+        usd_sell = float(sell_td.get_text(strip=True))
+        today = date.today()
+
+        with SessionLocal() as db:
+            from sqlalchemy import text as sa_text
+            existing = db.execute(
+                sa_text("SELECT date FROM daily_exchange_rate WHERE date=:d"),
+                {"d": today}
+            ).fetchone()
+            if existing:
+                db.execute(
+                    sa_text("UPDATE daily_exchange_rate SET usd_buy=:b, usd_sell=:s WHERE date=:d"),
+                    {"b": usd_buy, "s": usd_sell, "d": today}
+                )
+            else:
+                db.execute(
+                    sa_text("INSERT INTO daily_exchange_rate (date, usd_buy, usd_sell) VALUES (:d, :b, :s)"),
+                    {"d": today, "b": usd_buy, "s": usd_sell}
+                )
+            db.commit()
+
+        elapsed = round(time.monotonic() - t0, 1)
+        print(f"[fetcher][exchange_rate] USD buy={usd_buy} sell={usd_sell} in {elapsed}s")
+        return today
+    except Exception:
+        elapsed = round(time.monotonic() - t0, 1)
+        print(f"[fetcher][exchange_rate] ERROR in {elapsed}s")
+        raise

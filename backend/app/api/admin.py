@@ -26,9 +26,9 @@ router = APIRouter()
 
 # 存函式名稱，執行時 getattr(_fetcher, name)，便於測試 patch fetcher 模組
 JOB_STEPS: dict[str, tuple[str, ...]] = {
-    "institutional": ("fetch_institutional_market", "fetch_institutional_stocks"),
+    "institutional": ("fetch_institutional_market", "fetch_institutional_stocks", "fetch_turnover"),
     "futures": ("fetch_futures_oi", "fetch_options_data"),
-    "margin": ("fetch_margin",),
+    "margin": ("fetch_margin", "fetch_exchange_rate"),
 }
 
 # 每個 job 對應要檢查的欄位（stock_id='0000'），若已有值代表資料已抓過

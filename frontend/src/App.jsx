@@ -11,6 +11,9 @@ import Widget_BrokerFlow from './components/Widget_BrokerFlow'
 import Widget_Concentration from './components/Widget_Concentration'
 import Widget4_FuturesOI from './components/Widget4_FuturesOI'
 import Widget5_Options from './components/Widget5_Options'
+import Widget_Volume from './components/Widget_Volume'
+import Widget_ExchangeRate from './components/Widget_ExchangeRate'
+import Widget_CommonBuy from './components/Widget_CommonBuy'
 import MarketDataFreshnessBar from './components/MarketDataFreshnessBar'
 import useStore from './store/useStore'
 
@@ -76,6 +79,10 @@ export default function App() {
           {activeTab === 'overview' && (
             <>
               <Widget1_Institutional data={marketData} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Widget_Volume data={marketData} />
+                <Widget_ExchangeRate data={marketData} />
+              </div>
               <Widget3_LiquidGauge data={marketData} />
               <Widget4_FuturesOI data={marketData} />
               <Widget5_Options refreshNonce={optionsRefreshNonce} />
@@ -86,6 +93,7 @@ export default function App() {
           {activeTab === 'institutional' && (
             <>
               <Widget_InstitutionalSummary marketData={marketData} />
+              <Widget_CommonBuy />
               <Widget_InstitutionalRanking />
             </>
           )}

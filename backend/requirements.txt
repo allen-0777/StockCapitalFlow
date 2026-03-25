@@ -7,6 +7,7 @@ apscheduler
 python-dotenv
 exchange-calendars
 psycopg2-binary
+beautifulsoup4
 pytest
 pytest-asyncio
 httpx
