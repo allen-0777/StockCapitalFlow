@@ -1,7 +1,8 @@
 """
 Admin trigger endpoint — 供 GitHub Actions 排程呼叫，取代 APScheduler。
-POST /api/v1/admin/trigger/{job}?secret=XXX  → 立即回傳，背景執行
-GET  /api/v1/admin/job-status/{job}?secret=XXX → polling 查詢結果
+POST /api/v1/admin/trigger/all?secret=XXX  → 一次跑完三個 job（跳過已有資料的）
+POST /api/v1/admin/trigger/{job}?secret=XXX  → 單獨跑某個 job
+GET  /api/v1/admin/job-status/{job_or_all}?secret=XXX → polling 查詢結果
 POST /api/v1/admin/daily-digest?secret=XXX
 """
 import asyncio
@@ -25,6 +26,8 @@ from app.services.notification import (
 )
 
 router = APIRouter()
+
+ALL_JOBS = ("institutional", "futures", "margin")
 
 # 存函式名稱，執行時 getattr(_fetcher, name)，便於測試 patch fetcher 模組
 JOB_STEPS: dict[str, tuple[str, ...]] = {
@@ -76,22 +79,14 @@ def _summarize_job_status(steps: list[dict]) -> str:
     return JOB_PARTIAL
 
 
-async def _run_job(job: str, notify: bool):
-    """背景執行 job，結果存到 _job_results"""
-    expected = latest_trading_day()
-    steps: list[dict] = []
+async def _run_steps_for_job(job: str, expected) -> tuple[list[dict], object]:
+    """執行單一 job 的所有 steps，回傳 (steps, got_date)"""
+    steps = []
     got_date = None
-
     for fn_name in JOB_STEPS[job]:
         fn = getattr(_fetcher, fn_name)
         t0 = time.monotonic()
-        step: dict = {
-            "fn": fn_name,
-            "status": None,
-            "duration_s": None,
-            "error": None,
-            "date": None,
-        }
+        step = {"job": job, "fn": fn_name, "status": None, "duration_s": None, "error": None, "date": None}
         try:
             result = await fn()
             step["status"] = STEP_OK
@@ -104,7 +99,57 @@ async def _run_job(job: str, notify: bool):
             step["duration_s"] = round(time.monotonic() - t0, 1)
             step["error"] = str(e)
         steps.append(step)
+    return steps, got_date
 
+
+async def _run_all_jobs(notify: bool):
+    """背景依序執行 institutional → futures → margin，跳過已有資料的"""
+    expected = latest_trading_day()
+    all_steps: list[dict] = []
+    all_dates: dict[str, object] = {}
+    t0_total = time.monotonic()
+
+    for job in ALL_JOBS:
+        if _job_already_done(job, expected):
+            all_steps.append({"job": job, "fn": "cache_hit", "status": STEP_OK, "duration_s": 0})
+            all_dates[job] = expected
+            print(f"[admin:all] {job} already done, skipping")
+            continue
+
+        print(f"[admin:all] running {job}...")
+        steps, got_date = await _run_steps_for_job(job, expected)
+        all_steps.extend(steps)
+        if got_date:
+            all_dates[job] = got_date
+
+    total_s = round(time.monotonic() - t0_total, 1)
+    date_match = all(all_dates.get(j) == expected for j in ALL_JOBS)
+    job_status = _summarize_job_status(all_steps)
+    cache_clear()
+
+    result = {
+        "status": job_status,
+        "job": "all",
+        "expected_date": str(expected),
+        "date_match": date_match,
+        "duration_s": total_s,
+        "steps": all_steps,
+    }
+    _job_results["all"] = result
+
+    if notify:
+        try:
+            await send_job_result("all", all_steps, expected if date_match else None, expected)
+        except Exception as e:
+            print(f"[admin:all] notify error: {e}")
+
+    print(f"[admin:all] finished in {total_s}s: {job_status} date_match={date_match}")
+
+
+async def _run_job(job: str, notify: bool):
+    """背景執行單一 job，結果存到 _job_results"""
+    expected = latest_trading_day()
+    steps, got_date = await _run_steps_for_job(job, expected)
     job_status = _summarize_job_status(steps)
     date_match = got_date == expected if got_date else False
     cache_clear()
@@ -128,6 +173,62 @@ async def _run_job(job: str, notify: bool):
     print(f"[admin] {job} finished: {job_status} date_match={date_match}")
 
 
+# ── trigger/all ─────────────────────────────────────────────
+
+@router.post("/api/v1/admin/trigger/all")
+async def trigger_all(secret: str = "", notify: bool = False, force: bool = False):
+    expected_secret = os.getenv("TRIGGER_SECRET", "")
+    if not expected_secret or secret != expected_secret:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    if not is_trading_day():
+        return {"status": "skipped", "reason": "非台股交易日"}
+
+    expected = latest_trading_day()
+
+    # 檢查哪些 job 需要跑
+    jobs_to_run = []
+    jobs_cached = []
+    for job in ALL_JOBS:
+        if not force and _job_already_done(job, expected):
+            jobs_cached.append(job)
+        else:
+            jobs_to_run.append(job)
+
+    if not jobs_to_run:
+        result = {
+            "status": JOB_OK,
+            "job": "all",
+            "expected_date": str(expected),
+            "date_match": True,
+            "jobs_cached": jobs_cached,
+            "jobs_to_run": [],
+            "cached": True,
+        }
+        _job_results["all"] = result
+        return result
+
+    # 背景執行
+    _job_results["all"] = {
+        "status": "running",
+        "job": "all",
+        "expected_date": str(expected),
+        "jobs_cached": jobs_cached,
+        "jobs_to_run": jobs_to_run,
+    }
+    asyncio.create_task(_run_all_jobs(notify))
+
+    return {
+        "status": "accepted",
+        "job": "all",
+        "expected_date": str(expected),
+        "jobs_cached": jobs_cached,
+        "jobs_to_run": jobs_to_run,
+    }
+
+
+# ── trigger/{job} (single) ──────────────────────────────────
+
 @router.post("/api/v1/admin/trigger/{job}")
 async def trigger_job(job: str, secret: str = "", notify: bool = False, force: bool = False):
     expected_secret = os.getenv("TRIGGER_SECRET", "")
@@ -142,7 +243,6 @@ async def trigger_job(job: str, secret: str = "", notify: bool = False, force: b
 
     expected = latest_trading_day()
 
-    # 若資料已存在，直接回傳成功（除非 force=true）
     if not force and _job_already_done(job, expected):
         print(f"[admin] {job} already done for {expected}, skipping")
         result = {
@@ -157,12 +257,13 @@ async def trigger_job(job: str, secret: str = "", notify: bool = False, force: b
         _job_results[job] = result
         return result
 
-    # 非同步背景執行，立即回傳 accepted
     _job_results[job] = {"status": "running", "job": job, "expected_date": str(expected)}
     asyncio.create_task(_run_job(job, notify))
 
     return {"status": "accepted", "job": job, "expected_date": str(expected)}
 
+
+# ── job-status polling ───────────────────────────────────────
 
 @router.get("/api/v1/admin/job-status/{job}")
 async def job_status(job: str, secret: str = ""):
@@ -171,14 +272,13 @@ async def job_status(job: str, secret: str = ""):
     if not expected_secret or secret != expected_secret:
         raise HTTPException(status_code=403, detail="Invalid secret")
 
-    if job not in JOB_STEPS:
-        raise HTTPException(status_code=404, detail=f"Unknown job: {job}")
-
     result = _job_results.get(job)
     if not result:
         return {"status": "unknown", "job": job}
     return result
 
+
+# ── daily-digest ─────────────────────────────────────────────
 
 @router.post("/api/v1/admin/daily-digest")
 async def daily_digest(secret: str = "", db: Session = Depends(get_db)):
