@@ -166,7 +166,7 @@ async def sync_market_series_daily(days: int = 0) -> date | None:
             row = db.execute(
                 text("SELECT date FROM market_series_daily WHERE series_id='IDX:TAIEX' ORDER BY date DESC LIMIT 1")
             ).fetchone()
-            days = 10 if row else 400
+            days = 10 if row else 180
         print(f"[industry] auto days={days}")
     start = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
     latest: date | None = None
