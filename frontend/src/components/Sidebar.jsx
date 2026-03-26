@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity, Layers, PieChart, Building2, Star } from 'lucide-react'
+import { Activity, Layers, PieChart, Building2, Star, TrendingUp } from 'lucide-react'
 import useStore from '../store/useStore'
 
 const tabs = [
@@ -7,6 +7,7 @@ const tabs = [
   { id: 'institutional', icon: <Layers size={20} />, label: '法人進出' },
   { id: 'broker', icon: <Building2 size={20} />, label: '分點進出' },
   { id: 'concentration', icon: <PieChart size={20} />, label: '法人持股' },
+  { id: 'rotation', icon: <TrendingUp size={20} />, label: '產業輪動' },
   { id: 'watchlist', icon: <Star size={20} />, label: '自選股' },
 ]
 

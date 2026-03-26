@@ -1,4 +1,4 @@
-import { Activity, Layers, Building2, PieChart, Star } from 'lucide-react'
+import { Activity, Layers, Building2, PieChart, Star, TrendingUp } from 'lucide-react'
 import useStore from '../store/useStore'
 
 const tabs = [
@@ -6,6 +6,7 @@ const tabs = [
   { id: 'institutional', icon: Layers, label: '法人' },
   { id: 'broker', icon: Building2, label: '分點' },
   { id: 'concentration', icon: PieChart, label: '持股' },
+  { id: 'rotation', icon: TrendingUp, label: '輪動' },
   { id: 'watchlist', icon: Star, label: '自選' },
 ]
 
