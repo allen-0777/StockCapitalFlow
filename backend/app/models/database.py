@@ -34,7 +34,13 @@ if _db_url:
     if _db_url.startswith("postgres://"):
         _db_url = _db_url.replace("postgres://", "postgresql://", 1)
     DATABASE_URL = _db_url
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=2,
+        max_overflow=1,
+        pool_pre_ping=True,   # 自動偵測並回收殭屍連線
+        pool_recycle=300,     # 5 分鐘強制回收，避免 Supabase 踢掉閒置連線
+    )
 else:
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'data.db')}"
