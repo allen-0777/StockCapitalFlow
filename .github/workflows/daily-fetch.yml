@@ -16,6 +16,7 @@ on:
           - institutional
           - futures
           - margin
+          - industry
           - daily-digest
 
 # ── 1. 喚醒 Render ────────────────────────────────────────────
