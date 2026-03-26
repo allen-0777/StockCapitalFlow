@@ -28,7 +28,7 @@ from app.services.notification import (
 
 router = APIRouter()
 
-ALL_JOBS = ("institutional", "futures", "margin")
+ALL_JOBS = ("institutional", "futures", "margin", "industry")
 
 # 存函式名稱，執行時 getattr(_fetcher, name)，便於測試 patch fetcher 模組
 JOB_STEPS: dict[str, tuple[str, ...]] = {

@@ -155,11 +155,19 @@ async def sync_stock_industries() -> date | None:
     return date.today()
 
 
-async def sync_market_series_daily(days: int = 400) -> date | None:
+async def sync_market_series_daily(days: int = 0) -> date | None:
     """
     TaiwanStockTotalReturnIndex：TAIEX、TPEx；
     TaiwanStockPrice：各產業代表股 → series_id IND:產業名稱。
+    days=0 時自動判斷：DB 已有資料則抓 10 天增量，否則抓 400 天初始化。
     """
+    if days == 0:
+        with SessionLocal() as db:
+            row = db.execute(
+                text("SELECT date FROM market_series_daily WHERE series_id='IDX:TAIEX' ORDER BY date DESC LIMIT 1")
+            ).fetchone()
+            days = 10 if row else 400
+        print(f"[industry] auto days={days}")
     start = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
     latest: date | None = None
 
