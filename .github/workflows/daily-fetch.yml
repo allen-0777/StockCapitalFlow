@@ -106,8 +106,8 @@ jobs:
               2>/dev/null || echo "false")
             echo "  poll $p/60: status=$PSTATUS date_match=$PMATCH"
 
-            # 還在跑
-            [ "$PSTATUS" = "running" ] || [ "$PSTATUS" = "accepted" ] && continue
+            # 還在跑（包括 unknown = poll timeout/backend unresponsive，可能是 OOM 恢復中）
+            [ "$PSTATUS" = "running" ] || [ "$PSTATUS" = "accepted" ] || [ "$PSTATUS" = "unknown" ] && continue
             # 成功（date_match 僅供參考，status=ok 即算完成）
             [ "$PSTATUS" = "ok" ] && echo "Success! date_match=$PMATCH" && exit 0
             # 失敗
