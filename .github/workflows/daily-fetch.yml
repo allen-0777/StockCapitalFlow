@@ -108,8 +108,8 @@ jobs:
 
             # 還在跑
             [ "$PSTATUS" = "running" ] || [ "$PSTATUS" = "accepted" ] && continue
-            # 成功
-            [ "$PMATCH" = "true" ] && echo "Success!" && exit 0
+            # 成功（date_match 僅供參考，status=ok 即算完成）
+            [ "$PSTATUS" = "ok" ] && echo "Success! date_match=$PMATCH" && exit 0
             # 失敗
             echo "Job ended with status=$PSTATUS date_match=$PMATCH"
             echo "Full response: $POLL"
