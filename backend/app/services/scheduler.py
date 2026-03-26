@@ -8,6 +8,8 @@ from app.services.fetcher import (
     fetch_margin,
     fetch_futures_oi,
     fetch_options_data,
+    sync_stock_industries,
+    sync_market_series_daily,
 )
 from app.services.trading_calendar import is_trading_day, latest_trading_day
 from app.models.database import cache_clear
@@ -75,6 +77,20 @@ def _job_margin():
     _run_job("融資券", [fetch_margin])
 
 
+def _job_industry():
+    """產業對照 + 大盤／產業 proxy 日線（FinMind）；非交易日略過。"""
+    if not is_trading_day():
+        print("[scheduler] industry: 今日非台股交易日，跳過")
+        return
+    try:
+        _run_async(sync_stock_industries())
+        got = _run_async(sync_market_series_daily())
+        cache_clear()
+        print(f"[scheduler] ✅ industry 完成 (最新序列日: {got})")
+    except Exception as e:
+        print(f"[scheduler] ❌ industry 失敗: {e}")
+
+
 def start_scheduler():
     scheduler = BackgroundScheduler(timezone="Asia/Taipei")
 
@@ -97,10 +113,17 @@ def start_scheduler():
         id="margin",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _job_industry,
+        CronTrigger(hour=18, minute=5),
+        id="industry",
+        replace_existing=True,
+    )
 
     scheduler.start()
     print("[scheduler] APScheduler started")
     print("[scheduler]   17:00 法人買賣超（交易日驗證 + 10 分鐘重試）")
     print("[scheduler]   17:30 期貨OI + 選擇權（交易日驗證 + 10 分鐘重試）")
     print("[scheduler]   17:45 融資券（交易日驗證 + 10 分鐘重試）")
+    print("[scheduler]   18:05 產業／市場序列（FinMind，交易日）")
     return scheduler

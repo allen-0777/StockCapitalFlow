@@ -460,3 +460,15 @@ async def fetch_exchange_rate():
         elapsed = round(time.monotonic() - t0, 1)
         print(f"[fetcher][exchange_rate] ERROR in {elapsed}s")
         raise
+
+
+async def sync_stock_industries():
+    from app.services.industry_sync import sync_stock_industries as _sync
+
+    return await _sync()
+
+
+async def sync_market_series_daily():
+    from app.services.industry_sync import sync_market_series_daily as _sync
+
+    return await _sync()

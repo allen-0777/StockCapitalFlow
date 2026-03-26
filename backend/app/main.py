@@ -5,7 +5,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.models.database import init_db
-from app.api import health, market, stocks, watchlist, institutional, broker, concentration, admin
+from app.api import health, market, stocks, watchlist, institutional, broker, concentration, admin, industries
 
 
 @asynccontextmanager
@@ -43,3 +43,4 @@ app.include_router(institutional.router)
 app.include_router(broker.router)
 app.include_router(concentration.router)
 app.include_router(admin.router)
+app.include_router(industries.router)

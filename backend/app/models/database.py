@@ -121,6 +121,24 @@ class StockPrice(Base):
     volume = Column(Integer, nullable=True)
 
 
+class StockIndustry(Base):
+    """上市櫃股票 → FinMind TaiwanStockInfo 產業分類"""
+    __tablename__ = "stock_industry"
+    stock_id = Column(String, primary_key=True)
+    industry_name = Column(String, nullable=False)
+
+
+class MarketSeriesDaily(Base):
+    """大盤／櫃買報酬指數與產業代表股收盤（proxy）日線"""
+    __tablename__ = "market_series_daily"
+    date = Column(String, primary_key=True)
+    series_id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    series_type = Column(String, nullable=False)  # index | proxy
+    close = Column(Numeric, nullable=False)
+    volume = Column(Integer, nullable=True)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
@@ -151,7 +169,14 @@ def init_db():
         db.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_options_date ON daily_options(date DESC)"
         ))
-        db.commit()
+        try:
+            db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_market_series_sid_date "
+                "ON market_series_daily(series_id, date DESC)"
+            ))
+            db.commit()
+        except Exception:
+            db.rollback()
 
 
 def get_db():

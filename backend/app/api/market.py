@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.models.database import get_db, cache_get, cache_set
+from app.services.rotation import compute_rotation
 
 router = APIRouter()
 
@@ -219,3 +220,18 @@ def exchange_rate_history(
     ]
     cache_set(cache_key, result)
     return result
+
+
+@router.get("/api/v1/market/rotation")
+def market_rotation(
+    lookback: int = 120,
+    db: Session = Depends(get_db),
+):
+    """產業相對加權報酬指數之 RS、排名與規則式輪動訊號"""
+    cache_key = f"market_rotation:{lookback}"
+    cached = cache_get(cache_key, ttl_seconds=900)
+    if cached is not None:
+        return cached
+    out = compute_rotation(db, lookback=lookback)
+    cache_set(cache_key, out)
+    return out

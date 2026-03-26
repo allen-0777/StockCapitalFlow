@@ -35,6 +35,7 @@ JOB_STEPS: dict[str, tuple[str, ...]] = {
     "institutional": ("fetch_institutional_market", "fetch_institutional_stocks", "fetch_turnover"),
     "futures": ("fetch_futures_oi", "fetch_options_data"),
     "margin": ("fetch_margin", "fetch_exchange_rate"),
+    "industry": ("sync_stock_industries", "sync_market_series_daily"),
 }
 
 # 每個 job 對應要檢查的欄位（stock_id='0000'），若已有值代表資料已抓過
@@ -50,6 +51,17 @@ _job_results: dict[str, dict] = {}
 
 def _job_already_done(job: str, expected) -> bool:
     """檢查 DB 裡是否已有當天資料，有的話就不用重抓"""
+    if job == "industry":
+        with SessionLocal() as db:
+            row = db.execute(
+                sa_text(
+                    "SELECT date FROM market_series_daily WHERE series_id='IDX:TAIEX' "
+                    "ORDER BY date DESC LIMIT 1"
+                )
+            ).fetchone()
+            if not row or row[0] is None:
+                return False
+            return str(row[0]) == str(expected)
     col = JOB_CHECK_COL.get(job)
     if not col:
         return False
@@ -239,7 +251,7 @@ async def trigger_job(job: str, secret: str = "", notify: bool = False, force: b
     if job not in JOB_STEPS:
         raise HTTPException(status_code=404, detail=f"Unknown job: {job}. Valid: {list(JOB_STEPS)}")
 
-    if not is_trading_day():
+    if job != "industry" and not is_trading_day():
         return {"status": "skipped", "reason": "非台股交易日"}
 
     expected = date.today()
