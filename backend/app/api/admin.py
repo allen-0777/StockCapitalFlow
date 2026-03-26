@@ -8,12 +8,13 @@ POST /api/v1/admin/daily-digest?secret=XXX
 import asyncio
 import os
 import time
+from datetime import date
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text as sa_text
 
 from app.services import fetcher as _fetcher
-from app.services.trading_calendar import is_trading_day, latest_trading_day
+from app.services.trading_calendar import is_trading_day
 from app.models.database import cache_clear, get_db, SessionLocal
 from app.services.notification import (
     STEP_OK,
@@ -104,7 +105,7 @@ async def _run_steps_for_job(job: str, expected) -> tuple[list[dict], object]:
 
 async def _run_all_jobs(notify: bool):
     """背景依序執行 institutional → futures → margin，跳過已有資料的"""
-    expected = latest_trading_day()
+    expected = date.today()
     all_steps: list[dict] = []
     all_dates: dict[str, object] = {}
     t0_total = time.monotonic()
@@ -148,7 +149,7 @@ async def _run_all_jobs(notify: bool):
 
 async def _run_job(job: str, notify: bool):
     """背景執行單一 job，結果存到 _job_results"""
-    expected = latest_trading_day()
+    expected = date.today()
     steps, got_date = await _run_steps_for_job(job, expected)
     job_status = _summarize_job_status(steps)
     date_match = got_date == expected if got_date else False
@@ -184,7 +185,7 @@ async def trigger_all(secret: str = "", notify: bool = False, force: bool = Fals
     if not is_trading_day():
         return {"status": "skipped", "reason": "非台股交易日"}
 
-    expected = latest_trading_day()
+    expected = date.today()
 
     # 檢查哪些 job 需要跑
     jobs_to_run = []
@@ -241,7 +242,7 @@ async def trigger_job(job: str, secret: str = "", notify: bool = False, force: b
     if not is_trading_day():
         return {"status": "skipped", "reason": "非台股交易日"}
 
-    expected = latest_trading_day()
+    expected = date.today()
 
     if not force and _job_already_done(job, expected):
         print(f"[admin] {job} already done for {expected}, skipping")
