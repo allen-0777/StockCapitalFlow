@@ -15,10 +15,11 @@ import Widget_Volume from './components/Widget_Volume'
 import Widget_ExchangeRate from './components/Widget_ExchangeRate'
 import Widget_CommonBuy from './components/Widget_CommonBuy'
 import MarketDataFreshnessBar from './components/MarketDataFreshnessBar'
+import Widget_IndustryRotation from './components/Widget_IndustryRotation'
 import useStore from './store/useStore'
 
 export default function App() {
-  const { setWatchlist, activeTab } = useStore()
+  const { setWatchlist, activeTab, setActiveTab } = useStore()
   const [marketData, setMarketData] = useState(null)
   const [watchlist, setWatchlistLocal] = useState([])
   const [optionsRefreshNonce, setOptionsRefreshNonce] = useState(0)
@@ -46,6 +47,13 @@ export default function App() {
     fetchWatchlist()
     setOptionsRefreshNonce((n) => n + 1)
   }, [fetchMarket, fetchWatchlist])
+
+  // 初始化時從 URL 讀取 tab 參數
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const tab = params.get('tab')
+    if (tab) setActiveTab(tab)
+  }, [setActiveTab])
 
   useEffect(() => {
     fetchMarket()
@@ -97,6 +105,8 @@ export default function App() {
               <Widget_InstitutionalRanking />
             </>
           )}
+
+          {activeTab === 'rotation' && <Widget_IndustryRotation />}
 
           {activeTab === 'broker' && (
             <Widget_BrokerFlow />
