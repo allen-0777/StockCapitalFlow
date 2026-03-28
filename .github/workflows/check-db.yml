@@ -1,0 +1,52 @@
+name: Check Database
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install deps
+        run: pip install --quiet sqlalchemy psycopg2-binary python-dotenv
+      
+      - name: Run check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python << 'EOF'
+import os
+from sqlalchemy import create_engine, text
+
+DATABASE_URL = os.environ.get('DATABASE_URL')
+engine = create_engine(DATABASE_URL)
+
+with engine.connect() as conn:
+    # Check institutional
+    result = conn.execute(text("SELECT MAX(date) FROM taiwan_stock_institutional"))
+    inst_date = result.scalar()
+    print(f"三大法人最新日期: {inst_date}")
+    
+    # Check futures  
+    result = conn.execute(text("SELECT MAX(date) FROM taiwan_stock_futures"))
+    futures_date = result.scalar()
+    print(f"期貨最新日期: {futures_date}")
+    
+    # Check margin
+    result = conn.execute(text("SELECT MAX(date) FROM taiwan_stock_margin"))
+    margin_date = result.scalar()
+    print(f"融資融券最新日期: {margin_date}")
+    
+    # Check industry
+    result = conn.execute(text("SELECT MAX(date) FROM taiwan_stock_industry_day"))
+    industry_date = result.scalar()
+    print(f"產業日資料最新日期: {industry_date}")
+EOF
