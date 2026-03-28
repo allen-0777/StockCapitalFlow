@@ -2,7 +2,7 @@ name: Daily Digest
 
 on:
   schedule:
-    - cron: '0 14 * * *'     # 22:00 CST — 每日 Telegram 彙整（含假日）
+    - cron: '0 14 * * *'   # 22:00 CST — 每日 Telegram 彙整（含假日）
   workflow_dispatch:
     inputs:
       job:
@@ -13,32 +13,58 @@ on:
         options:
           - daily-digest
 
-# ── 每日彙整（呼叫 Render 發送 Telegram 通知）────────────────
-
 jobs:
   daily-digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
       TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
     steps:
-      - name: Wake up (brief)
+      - name: Wake + Trigger + Poll
         run: |
-          for j in $(seq 1 6); do
-            SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
-              "$BACKEND_URL/api/v1/health") || SC="000"
-            [ "$SC" = "200" ] && echo "Backend awake" && break
-            echo "attempt $j/6 (status: $SC)"; sleep 10
+          BACKEND_URL="${{ secrets.RENDER_BACKEND_URL }}"
+          TRIGGER_SECRET="${{ secrets.TRIGGER_SECRET }}"
+          
+          echo "=== 1. Waking up backend ==="
+          for j in $(seq 1 10); do
+            SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_URL/api/v1/health") || SC="000"
+            [ "$SC" = "200" ] && echo "Backend awake (attempt $j)" && break
+            echo "Waiting... attempt $j/10 (status: $SC)"
+            sleep 10
           done
-      - name: Trigger daily-digest
-        run: |
-          RESPONSE=$(curl -sS --max-time 120 -X POST \
-            "$BACKEND_URL/api/v1/admin/daily-digest?secret=$TRIGGER_SECRET" \
-            || echo '{"status":"error"}')
-          echo "Response: $RESPONSE"
-          STATUS=$(echo "$RESPONSE" | python3 -c \
-            "import sys,json; d=json.load(sys.stdin); print(d.get('status','error'))" \
+          
+          echo ""
+          echo "=== 2. Triggering job ==="
+          RESP=$(curl -sS --max-time 30 -X POST \
+            "$BACKEND_URL/api/v1/admin/trigger/daily-digest?secret=$TRIGGER_SECRET&notify=true") \
+            || RESP="{}"
+          echo "Trigger response: $RESP"
+          
+          STATUS=$(echo "$RESP" | python3 -c \
+            "import sys,json; print(json.load(sys.stdin).get('status','error'))" \
             2>/dev/null || echo "error")
-          [ "$STATUS" != "ok" ] && echo "daily-digest failed" && exit 1
-          exit 0
+          
+          [ "$STATUS" = "skipped" ] && echo "Non-trading day." && exit 0
+          [ "$STATUS" != "accepted" ] && echo "Unexpected status: $STATUS" && exit 1
+          
+          echo ""
+          echo "=== 3. Polling for completion ==="
+          for p in $(seq 1 60); do
+            sleep 15
+            POLL=$(curl -sS --max-time 15 \
+              "$BACKEND_URL/api/v1/admin/job-status/daily-digest?secret=$TRIGGER_SECRET") \
+              || POLL="{}"
+            PSTATUS=$(echo "$POLL" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" \
+              2>/dev/null || echo "unknown")
+            echo "  poll $p/60: status=$PSTATUS"
+            
+            [ "$PSTATUS" = "running" ] || [ "$PSTATUS" = "accepted" ] || [ "$PSTATUS" = "unknown" ] && continue
+            [ "$PSTATUS" = "ok" ] && echo "Success!" && exit 0
+            echo "Job ended with status=$PSTATUS"
+            exit 1
+          done
+          echo "TIMEOUT: job did not complete in 15 minutes"
+          exit 1
+
