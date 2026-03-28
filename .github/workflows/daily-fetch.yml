@@ -1,129 +1,22 @@
-name: Daily Market Data Fetch
+name: Daily Digest
 
 on:
   schedule:
-    - cron: '30 9 * * 1-5'   # 17:30 CST — 抓盤後資料
     - cron: '0 14 * * *'     # 22:00 CST — 每日 Telegram 彙整（含假日）
   workflow_dispatch:
     inputs:
       job:
         description: 'Job to run'
         required: true
-        default: 'all'
+        default: 'daily-digest'
         type: choice
         options:
-          - all
-          - institutional
-          - futures
-          - margin
-          - industry
           - daily-digest
 
-# ── 1. 喚醒 Render ────────────────────────────────────────────
+# ── 每日彙整（呼叫 Render 發送 Telegram 通知）────────────────
+
 jobs:
-  wake:
-    if: |
-      github.event.schedule == '30 9 * * 1-5' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'daily-digest')
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - name: Wake up Render backend
-        env:
-          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
-        run: |
-          echo "Warming up backend..."
-          for j in $(seq 1 20); do
-            SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$BACKEND_URL/api/v1/health") || SC="000"
-            if [ "$SC" = "200" ]; then
-              echo "Backend is awake (attempt $j)"
-              exit 0
-            fi
-            echo "Waiting... attempt $j/20 (status: $SC)"
-            sleep 10
-          done
-          echo "WARNING: backend did not respond after 20 attempts, proceeding anyway"
-
-# ── 2. 資料抓取（單一 job，後端依序執行 + 自動跳過已有資料）──
-
-  fetch-all:
-    needs: [wake]
-    if: |
-      always() && needs.wake.result != 'cancelled' &&
-      (github.event.schedule == '30 9 * * 1-5' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'daily-digest'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
-      TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
-    steps:
-      - name: Ensure backend is awake
-        run: |
-          for j in $(seq 1 10); do
-            SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_URL/api/v1/health") || SC="000"
-            [ "$SC" = "200" ] && echo "Backend alive (attempt $j)" && exit 0
-            echo "attempt $j/10 (status: $SC)"; sleep 10
-          done
-          echo "WARNING: backend not responding, proceeding anyway"
-
-      - name: Fire and poll
-        run: |
-          # 判斷要跑 all 還是單一 job
-          JOB="${{ github.event.inputs.job || 'all' }}"
-          ENDPOINT="$BACKEND_URL/api/v1/admin/trigger/$JOB"
-
-          echo "=== Triggering $JOB ==="
-          RESP=$(curl -sS --max-time 30 -X POST \
-            "$ENDPOINT?secret=$TRIGGER_SECRET&notify=true") \
-            || RESP="{}"
-          echo "Trigger response: $RESP"
-
-          STATUS=$(echo "$RESP" | python3 -c \
-            "import sys,json; print(json.load(sys.stdin).get('status','error'))" \
-            2>/dev/null || echo "error")
-          DATE_MATCH=$(echo "$RESP" | python3 -c \
-            "import sys,json; print(str(json.load(sys.stdin).get('date_match','false')).lower())" \
-            2>/dev/null || echo "false")
-
-          # 非交易日
-          [ "$STATUS" = "skipped" ] && echo "Non-trading day." && exit 0
-          # 全部已有資料 (cached)
-          [ "$DATE_MATCH" = "true" ] && echo "All data already cached." && exit 0
-          # 已接受，進入 polling
-          [ "$STATUS" != "accepted" ] && echo "Unexpected status: $STATUS" && exit 1
-
-          echo "=== Polling for completion (every 15s, max 15 min) ==="
-          for p in $(seq 1 60); do
-            sleep 15
-            POLL=$(curl -sS --max-time 15 \
-              "$BACKEND_URL/api/v1/admin/job-status/$JOB?secret=$TRIGGER_SECRET") \
-              || POLL="{}"
-            PSTATUS=$(echo "$POLL" | python3 -c \
-              "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" \
-              2>/dev/null || echo "unknown")
-            PMATCH=$(echo "$POLL" | python3 -c \
-              "import sys,json; print(str(json.load(sys.stdin).get('date_match','false')).lower())" \
-              2>/dev/null || echo "false")
-            echo "  poll $p/60: status=$PSTATUS date_match=$PMATCH"
-
-            # 還在跑（包括 unknown = poll timeout/backend unresponsive，可能是 OOM 恢復中）
-            [ "$PSTATUS" = "running" ] || [ "$PSTATUS" = "accepted" ] || [ "$PSTATUS" = "unknown" ] && continue
-            # 成功（date_match 僅供參考，status=ok 即算完成）
-            [ "$PSTATUS" = "ok" ] && echo "Success! date_match=$PMATCH" && exit 0
-            # 失敗
-            echo "Job ended with status=$PSTATUS date_match=$PMATCH"
-            echo "Full response: $POLL"
-            exit 1
-          done
-          echo "TIMEOUT: job did not complete in 15 minutes" && exit 1
-
-# ── 3. 每日彙整（獨立，不依賴 wake）─────────────────────────
-
   daily-digest:
-    if: |
-      github.event.schedule == '0 14 * * *' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'daily-digest')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

@@ -1,0 +1,36 @@
+name: Direct Daily Fetch
+
+on:
+  schedule:
+    - cron: '30 9 * * 1-5'   # 17:30 CST — 抓盤後資料
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'Jobs to run (逗號分隔，或 all)'
+        default: 'all'
+        type: string
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --quiet \
+            sqlalchemy psycopg2-binary \
+            aiohttp beautifulsoup4 \
+            python-dotenv exchange-calendars
+
+      - name: Run fetch
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          FETCH_JOBS: ${{ inputs.jobs || 'all' }}
+        run: python backend/scripts/fetch_daily.py --jobs "$FETCH_JOBS"
