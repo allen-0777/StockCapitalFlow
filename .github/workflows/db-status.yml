@@ -1,3 +1,6 @@
+# 手動查詢 Supabase 各資料表最新日期（與 check-status.yml 功能相同，可擇一使用）。
+# 注意：查詢的資料表名稱（taiwan_stock_*）與現行 ORM（daily_chips 等）不符，需更新。
+# 需要 secrets：DATABASE_URL
 name: DB Status
 on: workflow_dispatch
 jobs:

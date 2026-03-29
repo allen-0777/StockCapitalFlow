@@ -1,3 +1,8 @@
+# 每日 Telegram 彙整通知：喚醒 Render 後呼叫 /admin/trigger/daily-digest。
+# 分工說明：
+#   本檔（daily-fetch.yml）— 僅負責發送通知，不抓取資料、不寫入 DB
+#   fetch-direct.yml       — 資料抓取直寫 Supabase（不走 Render）
+# 需要 secrets：RENDER_BACKEND_URL、TRIGGER_SECRET
 name: Daily Digest
 
 on:

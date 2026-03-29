@@ -1,3 +1,5 @@
+# 防止 Render 免費方案閒置休眠：每 5 小時 ping 一次 /api/v1/health。
+# 需要 secrets：RENDER_BACKEND_URL
 name: Keep Backend Awake
 
 on:

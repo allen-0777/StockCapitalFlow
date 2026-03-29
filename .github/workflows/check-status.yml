@@ -1,3 +1,6 @@
+# 手動查詢 Supabase 各資料表最新日期，用於確認資料是否正常更新。
+# 注意：查詢的資料表名稱（taiwan_stock_*）與現行 ORM（daily_chips 等）不符，需更新。
+# 需要 secrets：DATABASE_URL
 name: Check DB
 on: workflow_dispatch
 jobs:

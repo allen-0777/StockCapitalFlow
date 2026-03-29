@@ -1,11 +1,22 @@
+# 每日資料直寫：GH Actions runner 直接連 Supabase，不需喚醒 Render。
+# 分工說明：
+#   本檔（fetch-direct.yml）— 資料抓取寫入 DB（不走 Render）
+#   daily-fetch.yml         — 每日 Telegram 彙整通知（需呼叫 Render API）
 name: Direct Daily Fetch
 
 on:
   schedule:
-    - cron: '30 9 * * 1-5'   # 17:30 CST — 抓盤後資料
+    # UTC 09:30 = CST 17:30（台灣標準時間），週一至五收盤後抓盤後資料
+    - cron: '30 9 * * 1-5'
   workflow_dispatch:
     inputs:
       jobs:
+        # 可填逗號分隔的 job 名稱，或留空跑 all。
+        # 可用值：institutional、futures、margin、industry
+        # 注意：industry（sync_stock_industries + sync_market_series_daily）
+        #       非交易日也會執行（腳本內 TRADING_DAY_EXEMPT）；
+        #       其他 job 非交易日會自動跳過。
+        # 範例：institutional,margin 或單獨 industry
         description: 'Jobs to run (逗號分隔，或 all)'
         default: 'all'
         type: string
@@ -28,6 +39,8 @@ jobs:
             aiohttp beautifulsoup4 \
             python-dotenv exchange-calendars
 
+      # 需要 secrets：DATABASE_URL（Supabase 連線字串）、FINMIND_TOKEN（FinMind API token）
+      # FETCH_JOBS 透過 env 傳入，避免將 workflow input 直接拼入 run 指令（安全規範）
       - name: Run fetch
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
