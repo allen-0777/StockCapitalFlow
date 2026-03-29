@@ -1,3 +1,4 @@
+import asyncio
 import os
 import aiohttp
 from collections import defaultdict
@@ -38,8 +39,10 @@ async def _get_finmind(dataset: str, data_id: str, start_date: str) -> list:
 async def get_concentration(stock_id: str, days: int = 60):
     start_date = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
 
-    institutional_rows, shareholding_rows = await _get_institutional(stock_id, start_date), []
-    shareholding_rows = await _get_shareholding(stock_id, start_date)
+    institutional_rows, shareholding_rows = await asyncio.gather(
+        _get_institutional(stock_id, start_date),
+        _get_shareholding(stock_id, start_date),
+    )
 
     # 整理法人買賣超：按日期聚合
     daily = defaultdict(lambda: {"foreign": 0, "trust": 0, "dealer": 0})

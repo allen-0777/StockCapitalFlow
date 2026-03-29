@@ -138,10 +138,15 @@ GET /api/v1/health
 Response 200:
 {
   "status": "healthy",
-  "last_update": "2026-03-17"
+  "last_update": "2026-03-17",
+  "last_institutional": "2026-03-17",
+  "last_margin": "2026-03-16"
 }
 
-last_update 為 daily_chips 表中最新一筆的 date，若 DB 無資料則為 null。
+- `last_update`：`stock_id='0000'` 列上最新 `date`。
+- `last_institutional`：同上列且 `foreign_buy` 非空之最新 `date`。
+- `last_margin`：同上列且 `margin_long` 非空之最新 `date`。  
+  若 DB 無資料則各欄位可為 `null`。
 
 ---
 
@@ -232,7 +237,26 @@ Response 200: { "message": "已移除", "stock_id": "2330" }
 
 ---
 
-3.5 推播設定（Phase 2，尚未實作）
+3.5 Admin 排程觸發（需 TRIGGER_SECRET）
+
+POST `/api/v1/admin/trigger/all?secret=...`  
+一次排程內所有 job（`institutional`、`futures`、`margin`、`industry`）；非交易日會 skipped。
+
+POST `/api/v1/admin/trigger/{job}?secret=...`  
+`job`：`institutional` | `futures` | `margin` | `industry`。`industry` 允許非交易日觸發。
+
+**Query 選填**
+
+- `notify=true`：完成或失敗時嘗試 Telegram 通知（若已設定 bot）。
+- `force=true`：略過「當日已有資料」快取，強制重跑。
+- **`target_date=YYYY-MM-DD`**：將「預期交易日」設為該日，供 `_job_already_done` 與 `date_match` 比對。  
+  **限制**：證交所／期交所多數公開 API **無法指定歷史日期**，只回傳「目前已發布之最新交易日」資料；此參數無法讓後端向 TWSE 索取任意過去日期，主要用於「日曆已進下一日，但官方仍僅釋出昨日盤後資料」時，把 expected 對齊昨日，使 skip/force 判斷正確。格式錯誤回 HTTP 400。
+
+GET `/api/v1/admin/job-status/{job}?secret=...`：輪詢背景 job 狀態。
+
+---
+
+3.6 推播設定（Phase 2，尚未實作）
 
 PUT /api/v1/users/{user_id}/notifications
 
