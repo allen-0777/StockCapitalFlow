@@ -1,5 +1,4 @@
-# 手動查詢 Supabase 各資料表最新日期（與 check-status.yml 功能相同，可擇一使用）。
-# 注意：查詢的資料表名稱（taiwan_stock_*）與現行 ORM（daily_chips 等）不符，需更新。
+# 手動查詢 Supabase 各資料來源最新日期（與 check-status.yml 相同邏輯，可擇一使用）。
 # 需要 secrets：DATABASE_URL
 name: DB Status
 on: workflow_dispatch
@@ -18,16 +17,41 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python << 'PYEOF'
-import os
-from sqlalchemy import create_engine, text
-engine = create_engine(os.environ['DATABASE_URL'])
-with engine.connect() as conn:
-    r = conn.execute(text('SELECT MAX(date) FROM taiwan_stock_institutional'))
-    print('三大法人:', r.scalar())
-    r = conn.execute(text('SELECT MAX(date) FROM taiwan_stock_futures'))
-    print('期貨:', r.scalar())
-    r = conn.execute(text('SELECT MAX(date) FROM taiwan_stock_margin'))
-    print('融資融券:', r.scalar())
-    r = conn.execute(text('SELECT MAX(date) FROM taiwan_stock_industry_day'))
-    print('產業日資料:', r.scalar())
-PYEOF
+          import os
+          from sqlalchemy import create_engine, text
+
+          url = os.environ["DATABASE_URL"]
+          if url.startswith("postgres://"):
+              url = url.replace("postgres://", "postgresql://", 1)
+          engine = create_engine(url)
+          with engine.connect() as conn:
+              r = conn.execute(
+                  text(
+                      """SELECT MAX(date) FROM daily_chips
+                         WHERE stock_id = '0000' AND foreign_buy IS NOT NULL"""
+                  )
+              )
+              print("法人(大盤 0000):", r.scalar())
+              r = conn.execute(
+                  text(
+                      """SELECT MAX(date) FROM daily_chips
+                         WHERE stock_id = '0000' AND tx_foreign_long IS NOT NULL"""
+                  )
+              )
+              print("期貨OI(大盤):", r.scalar())
+              r = conn.execute(
+                  text(
+                      """SELECT MAX(date) FROM daily_chips
+                         WHERE stock_id = '0000' AND margin_long IS NOT NULL"""
+                  )
+              )
+              print("融資券(大盤):", r.scalar())
+              r = conn.execute(text("SELECT MAX(date) FROM daily_options"))
+              print("選擇權:", r.scalar())
+              r = conn.execute(text("SELECT MAX(date) FROM daily_exchange_rate"))
+              print("匯率:", r.scalar())
+              r = conn.execute(text("SELECT MAX(date) FROM market_series_daily"))
+              print("市場序列(加權/產業proxy):", r.scalar())
+              r = conn.execute(text("SELECT COUNT(*) FROM stock_industry"))
+              print("stock_industry 筆數:", r.scalar())
+          PYEOF
