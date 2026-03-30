@@ -13,13 +13,16 @@ on:
       jobs:
         # 可填逗號分隔的 job 名稱，或留空跑 all。
         # 可用值：institutional、futures、margin、industry
-        # 注意：industry（sync_stock_industries + sync_market_series_daily）
-        #       非交易日也會執行（腳本內 TRADING_DAY_EXEMPT）；
-        #       其他 job 非交易日會自動跳過。
+        # 注意：industry 非交易日也會執行；其他 job 非交易日預設跳過（除非開 force）。
         # 範例：institutional,margin 或單獨 industry
         description: 'Jobs to run (逗號分隔，或 all)'
         default: 'all'
         type: string
+      force:
+        # 週末或假日手動補抓時勾選：略過交易日判斷，直接呼叫 API（仍依 API 回傳日期寫入）
+        description: '非交易日也執行（補資料用）'
+        default: false
+        type: boolean
 
 jobs:
   fetch:
@@ -40,10 +43,30 @@ jobs:
             python-dotenv exchange-calendars
 
       # 需要 secrets：DATABASE_URL（Supabase 連線字串）、FINMIND_TOKEN（FinMind API token）
-      # FETCH_JOBS 透過 env 傳入，避免將 workflow input 直接拼入 run 指令（安全規範）
+      # FETCH_JOBS / FETCH_FORCE 透過 env 傳入，避免將 workflow input 直接拼入 run 指令（安全規範）
       - name: Run fetch
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           FETCH_JOBS: ${{ inputs.jobs || 'all' }}
-        run: python backend/scripts/fetch_daily.py --jobs "$FETCH_JOBS"
+          FETCH_FORCE: ${{ inputs.force || 'false' }}
+        run: |
+          FORCE_FLAG=""
+          [ "$FETCH_FORCE" = "true" ] && FORCE_FLAG="--force"
+          python backend/scripts/fetch_daily.py --jobs "$FETCH_JOBS" $FORCE_FLAG
+
+      # 失敗時推播 Telegram（需 secrets：TELEGRAM_BOT_TOKEN、TELEGRAM_CHAT_ID）
+      - name: Notify on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          MSG="❌ fetch-direct 失敗
+jobs: ${FETCH_JOBS:-all}
+$RUN_URL"
+          curl -sS -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
+            --data-urlencode "text=$MSG" \
+            > /dev/null
