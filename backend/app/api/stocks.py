@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.models.database import get_db
+from app.services.finmind_client import get_shared_session
 
 router = APIRouter()
 
@@ -18,11 +19,11 @@ async def _fetch_stock_list() -> list:
     if _stock_cache and _stock_cache_ts and (now - _stock_cache_ts).total_seconds() < _STOCK_CACHE_TTL:
         return _stock_cache
     url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            data = await resp.json(content_type=None)
-            _stock_cache = [{"code": r["Code"], "name": r["Name"]} for r in data if r.get("Code")]
-            _stock_cache_ts = now
+    session = await get_shared_session()
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        data = await resp.json(content_type=None)
+        _stock_cache = [{"code": r["Code"], "name": r["Name"]} for r in data if r.get("Code")]
+        _stock_cache_ts = now
     return _stock_cache
 
 

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -38,44 +40,65 @@ def market_summary(db: Session = Depends(get_db)):
     if cached is not None:
         return cached
 
-    # 法人資料：取有 foreign_buy 的最新一筆
-    inst_row = db.execute(
+    # 法人 + 融資券：單次 CTE（融資券優先與法人同日，否則退回最新一筆 margin）
+    chip_row = db.execute(
         text("""
-            SELECT date, foreign_buy, trust_buy, dealer_buy, market_volume
-            FROM daily_chips
-            WHERE stock_id = '0000'
-              AND foreign_buy IS NOT NULL
-            ORDER BY date DESC
-            LIMIT 1
+            WITH inst AS (
+                SELECT date, foreign_buy, trust_buy, dealer_buy, market_volume
+                FROM daily_chips
+                WHERE stock_id = '0000' AND foreign_buy IS NOT NULL
+                ORDER BY date DESC LIMIT 1
+            ),
+            margin_preferred AS (
+                SELECT c.date, c.margin_long, c.margin_short
+                FROM daily_chips c, inst i
+                WHERE c.stock_id = '0000'
+                  AND c.margin_long IS NOT NULL
+                  AND c.date = i.date
+                LIMIT 1
+            ),
+            margin_latest AS (
+                SELECT date, margin_long, margin_short
+                FROM daily_chips
+                WHERE stock_id = '0000' AND margin_long IS NOT NULL
+                ORDER BY date DESC LIMIT 1
+            )
+            SELECT
+                i.date AS inst_date,
+                i.foreign_buy, i.trust_buy, i.dealer_buy, i.market_volume,
+                COALESCE(mp.date, ml.date) AS margin_date,
+                COALESCE(mp.margin_long, ml.margin_long) AS margin_long,
+                COALESCE(mp.margin_short, ml.margin_short) AS margin_short
+            FROM (SELECT 1) AS _a
+            LEFT JOIN inst i ON 1=1
+            LEFT JOIN margin_preferred mp ON 1=1
+            LEFT JOIN margin_latest ml ON 1=1
         """)
     ).fetchone()
 
-    # 融資券：優先與「法人列」同日（避免畫面上法人日與融資券日差一天）；
-    # 若該日尚無融資券欄位，再退回「有 margin 的最新一筆」（證交所兩支 API 的 date 常不同步）
-    margin_row = None
-    if inst_row:
-        margin_row = db.execute(
-            text("""
-                SELECT date, margin_long, margin_short
-                FROM daily_chips
-                WHERE stock_id = '0000'
-                  AND date = :d
-                  AND margin_long IS NOT NULL
-                LIMIT 1
-            """),
-            {"d": inst_row.date},
-        ).fetchone()
-    if margin_row is None:
-        margin_row = db.execute(
-            text("""
-                SELECT date, margin_long, margin_short
-                FROM daily_chips
-                WHERE stock_id = '0000'
-                  AND margin_long IS NOT NULL
-                ORDER BY date DESC
-                LIMIT 1
-            """)
-        ).fetchone()
+    if chip_row is None or (chip_row.inst_date is None and chip_row.margin_date is None):
+        raise HTTPException(status_code=404, detail="尚無大盤籌碼資料，請等待每日排程執行")
+
+    inst_row = (
+        SimpleNamespace(
+            date=chip_row.inst_date,
+            foreign_buy=chip_row.foreign_buy,
+            trust_buy=chip_row.trust_buy,
+            dealer_buy=chip_row.dealer_buy,
+            market_volume=chip_row.market_volume,
+        )
+        if chip_row.inst_date is not None
+        else None
+    )
+    margin_row = (
+        SimpleNamespace(
+            date=chip_row.margin_date,
+            margin_long=chip_row.margin_long,
+            margin_short=chip_row.margin_short,
+        )
+        if chip_row.margin_date is not None
+        else None
+    )
 
     # 期貨未平倉資料：取最近 5 日（含歷史，用於 Sparkline + 趨勢）
     futures_rows = db.execute(
@@ -92,9 +115,6 @@ def market_summary(db: Session = Depends(get_db)):
         """)
     ).fetchall()
     futures_row = futures_rows[0] if futures_rows else None
-
-    if not inst_row and not margin_row:
-        raise HTTPException(status_code=404, detail="尚無大盤籌碼資料，請等待每日排程執行")
 
     foreign = float(inst_row.foreign_buy or 0) if inst_row else 0
     trust   = float(inst_row.trust_buy   or 0) if inst_row else 0

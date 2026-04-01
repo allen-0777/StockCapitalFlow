@@ -275,7 +275,6 @@ async def fetch_options_data():
     - P/C Ratio、壓力區（各履約價 OI） → FinMind TaiwanOptionDaily（可能延遲數日）
     db_date 以 TAIFEX 當日為準，P/C 為最近有資料日的 best-effort 填入。
     """
-    import os
     from datetime import timedelta
 
     t0 = time.monotonic()
@@ -301,24 +300,27 @@ async def fetch_options_data():
                 foreign_put_net_yi = round(net_kth / 100000, 2)
 
         # --- 2. P/C Ratio、壓力區 from FinMind（best-effort，可能落後數日）---
-        token = os.getenv("FINMIND_TOKEN", "")
-        finmind_url = "https://api.finmindtrade.com/api/v4/data"
+        from app.services.finmind_client import finmind_get, get_shared_session
+
         pc_ratio = call_max_strike = put_max_strike = None
         call_total_oi = put_total_oi = 0
         finmind_date = ""
 
-        async with aiohttp.ClientSession() as session:
-            for days_back in range(0, FINMIND_LOOKBACK_DAYS):
-                d = (date.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-                params = {"dataset": "TaiwanOptionDaily", "data_id": "TXO",
-                          "start_date": d, "token": token}
-                async with session.get(finmind_url, params=params,
-                                       timeout=aiohttp.ClientTimeout(total=30)) as r:
-                    body = await r.json(content_type=None)
-                    all_rows = [row for row in body.get("data", []) if row.get("date") == d]
-                    if all_rows:
-                        finmind_date = d
-                        break
+        session = await get_shared_session()
+        for days_back in range(0, FINMIND_LOOKBACK_DAYS):
+            d = (date.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+            body_rows = await finmind_get(
+                session,
+                "TaiwanOptionDaily",
+                "TXO",
+                d,
+                timeout=30.0,
+                token_in_query=True,
+            )
+            all_rows = [row for row in body_rows if row.get("date") == d]
+            if all_rows:
+                finmind_date = d
+                break
 
         if finmind_date:
             contracts = sorted(set(row["contract_date"] for row in all_rows))

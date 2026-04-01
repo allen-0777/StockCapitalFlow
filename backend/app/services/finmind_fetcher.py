@@ -1,39 +1,17 @@
-import os
-import aiohttp
 from datetime import date, timedelta
 from sqlalchemy import text
 from app.models.database import SessionLocal
-
-FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
-
-
-def _token() -> str:
-    return os.getenv("FINMIND_TOKEN", "")
+from app.services.finmind_client import FinMindQuotaError, finmind_get, get_shared_session
 
 
 async def _get_finmind(dataset: str, data_id: str, start_date: str, end_date: str = "") -> list:
-    params = {
-        "dataset":    dataset,
-        "data_id":    data_id,
-        "start_date": start_date,
-    }
-    if end_date:
-        params["end_date"] = end_date
-
-    headers = {
-        "User-Agent":    "Mozilla/5.0 (compatible; LiquidChip/1.0)",
-        "Authorization": f"Bearer {_token()}",
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            FINMIND_URL, params=params, headers=headers,
-            timeout=aiohttp.ClientTimeout(total=60)
-        ) as resp:
-            if resp.status == 402:
-                raise RuntimeError("FinMind API 配額已用盡，請明日再試或升級方案")
-            resp.raise_for_status()
-            body = await resp.json(content_type=None)
-            return body.get("data", [])
+    session = await get_shared_session()
+    try:
+        return await finmind_get(
+            session, dataset, data_id, start_date, end_date, timeout=60.0
+        )
+    except FinMindQuotaError:
+        raise RuntimeError("FinMind API 配額已用盡，請明日再試或升級方案")
 
 
 async def fetch_broker_daily(stock_id: str, days: int = 90) -> int:

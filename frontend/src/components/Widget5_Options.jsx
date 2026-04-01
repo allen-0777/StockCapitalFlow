@@ -2,20 +2,34 @@ import { useEffect, useState } from 'react'
 
 function PcRatioBar({ value }) {
   // P/C Ratio 通常範圍 60~160，中軸 100
-  const min = 60, max = 160
-  const clamped = Math.min(max, Math.max(min, value ?? 100))
-  const pct = ((clamped - min) / (max - min)) * 100
+  const min = 60
+  const max = 160
+  const n = typeof value === 'number' ? value : Number(value)
+  /** null / undefined / NaN：勿用 value<=90 等比較（null 會被當成 0 而誤判成偏空綠） */
+  const valid = Number.isFinite(n)
 
-  let color, label, labelColor
-  if (value >= 110) {
-    color = 'bg-gradient-to-r from-red-300 to-red-500'
-    label = '偏多'; labelColor = 'text-red-500'
-  } else if (value <= 90) {
-    color = 'bg-gradient-to-r from-green-300 to-green-500'
-    label = '偏空'; labelColor = 'text-green-500'
-  } else {
-    color = 'bg-gradient-to-r from-amber-300 to-amber-400'
-    label = '中性'; labelColor = 'text-amber-500'
+  let color = 'bg-slate-300'
+  let label = ''
+  let labelColor = 'text-slate-500'
+  let clamped = 100
+  let pct = 40
+
+  if (valid) {
+    clamped = Math.min(max, Math.max(min, n))
+    pct = ((clamped - min) / (max - min)) * 100
+    if (n >= 110) {
+      color = 'bg-gradient-to-r from-red-300 to-red-500'
+      label = '偏多'
+      labelColor = 'text-red-500'
+    } else if (n <= 90) {
+      color = 'bg-gradient-to-r from-green-300 to-green-500'
+      label = '偏空'
+      labelColor = 'text-green-500'
+    } else {
+      color = 'bg-gradient-to-r from-amber-300 to-amber-400'
+      label = '中性'
+      labelColor = 'text-amber-500'
+    }
   }
 
   return (
@@ -26,25 +40,42 @@ function PcRatioBar({ value }) {
           <span className="text-[10px] text-slate-400 ml-2">Put÷Call OI</span>
         </div>
         <div className="text-right">
-          <span className={`text-2xl font-black tabular-nums leading-none ${labelColor}`}>
-            {value != null ? `${value.toFixed(1)}%` : '—'}
+          <span className={`text-2xl font-black tabular-nums leading-none ${valid ? labelColor : 'text-slate-400'}`}>
+            {valid ? `${n.toFixed(1)}%` : '—'}
           </span>
-          {value != null && (
+          {valid && (
             <span className={`text-[11px] font-semibold ml-1.5 ${labelColor}`}>{label}</span>
           )}
         </div>
       </div>
       <div className="relative h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
-        <div className={`absolute left-0 top-0 h-full rounded-full transition-all duration-1000 ${color}`}
-          style={{ width: `${pct}%` }} />
+        {valid ? (
+          <div
+            className={`absolute left-0 top-0 h-full rounded-full transition-all duration-1000 ${color}`}
+            style={{ width: `${pct}%` }}
+          />
+        ) : (
+          <div
+            className="absolute left-0 top-0 h-full w-full rounded-full bg-slate-200/90"
+            title="FinMind 近月 OI 尚未就緒或 Put/Call 為 0，無法計算 P/C"
+          />
+        )}
         {/* 中軸 100% 標記 */}
-        <div className="absolute top-0 h-full w-px bg-slate-400/60" style={{ left: `${((100 - min) / (max - min)) * 100}%` }} />
+        <div
+          className="absolute top-0 h-full w-px bg-slate-400/60"
+          style={{ left: `${((100 - min) / (max - min)) * 100}%` }}
+        />
       </div>
       <div className="flex justify-between text-[10px] text-slate-400 mt-1">
         <span>空方 {min}%</span>
         <span className="text-slate-500">中性 100%</span>
         <span>多方 {max}%</span>
       </div>
+      {!valid && (
+        <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+          尚無法計算 P/C（多為 FinMind 近月履約價 OI 尚未齊備，或僅單邊有量）。盤後稍晚再試或待隔日排程。
+        </p>
+      )}
     </div>
   )
 }

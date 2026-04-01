@@ -7,6 +7,7 @@
   python backend/scripts/fetch_daily.py               # 抓所有 job
   python backend/scripts/fetch_daily.py --jobs institutional,futures
   python backend/scripts/fetch_daily.py --jobs industry  # 不受交易日限制
+  python backend/scripts/fetch_daily.py --jobs futures,margin --force  # 週末也跑（仍只寫 API 回傳之交易日）
 """
 from __future__ import annotations
 
@@ -38,30 +39,36 @@ JOBS: dict[str, list[str]] = {
 TRADING_DAY_EXEMPT = {"industry"}
 
 
-async def run(job_names: list[str]) -> int:
-    """執行指定 job，回傳失敗數"""
+async def run(job_names: list[str], *, force: bool = False) -> int:
+    """執行指定 job，回傳失敗數。force=True 時略過「非交易日跳過」（industry 本來就不跳過）。"""
     failures = 0
-    for job in job_names:
-        if job not in JOBS:
-            print(f"[ERROR] 未知 job: {job}，可用: {list(JOBS)}")
-            failures += 1
-            continue
-
-        if job not in TRADING_DAY_EXEMPT and not is_trading_day():
-            print(f"[{job}] 非交易日，跳過")
-            continue
-
-        for fn_name in JOBS[job]:
-            fn = getattr(_fetcher, fn_name)
-            t0 = time.monotonic()
-            try:
-                result = await fn()
-                elapsed = round(time.monotonic() - t0, 1)
-                print(f"[{job}] {fn_name} → {result} ({elapsed}s)")
-            except Exception as e:
-                elapsed = round(time.monotonic() - t0, 1)
-                print(f"[{job}] {fn_name} ERROR ({elapsed}s): {e}")
+    try:
+        for job in job_names:
+            if job not in JOBS:
+                print(f"[ERROR] 未知 job: {job}，可用: {list(JOBS)}")
                 failures += 1
+                continue
+
+            if not force and job not in TRADING_DAY_EXEMPT and not is_trading_day():
+                print(f"[{job}] 非交易日，跳過")
+                continue
+
+            for fn_name in JOBS[job]:
+                fn = getattr(_fetcher, fn_name)
+                t0 = time.monotonic()
+                try:
+                    result = await fn()
+                    elapsed = round(time.monotonic() - t0, 1)
+                    print(f"[{job}] {fn_name} → {result} ({elapsed}s)")
+                except Exception as e:
+                    elapsed = round(time.monotonic() - t0, 1)
+                    print(f"[{job}] {fn_name} ERROR ({elapsed}s): {e}")
+                    failures += 1
+
+    finally:
+        from app.services.finmind_client import close_shared_session
+
+        await close_shared_session()
 
     return failures
 
@@ -73,14 +80,19 @@ def main() -> None:
         default="all",
         help="逗號分隔的 job 名稱，或 'all'（預設）",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="非交易日仍執行（週末／假日手動補抓；寫入日期仍依 API 回傳）",
+    )
     args = parser.parse_args()
 
     init_db()
 
     job_list = list(JOBS.keys()) if args.jobs == "all" else args.jobs.split(",")
-    print(f"[fetch_daily] 執行 jobs: {job_list}")
+    print(f"[fetch_daily] 執行 jobs: {job_list}" + (" [force]" if args.force else ""))
 
-    failures = asyncio.run(run(job_list))
+    failures = asyncio.run(run(job_list, force=args.force))
     sys.exit(1 if failures else 0)
 
 

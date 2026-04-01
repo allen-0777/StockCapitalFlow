@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.models.database import init_db
 from app.api import health, market, stocks, watchlist, institutional, broker, concentration, admin, industries
+from app.services.finmind_client import close_shared_session
 
 
 @asynccontextmanager
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI):
     yield
     if scheduler:
         scheduler.shutdown()
+    await close_shared_session()
 
 
 app = FastAPI(title="LiquidChip API", lifespan=lifespan)

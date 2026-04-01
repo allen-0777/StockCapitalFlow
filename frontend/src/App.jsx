@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, lazy, Suspense } from 'react'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import BottomTabBar from './components/BottomTabBar'
@@ -15,7 +15,7 @@ import Widget_Volume from './components/Widget_Volume'
 import Widget_ExchangeRate from './components/Widget_ExchangeRate'
 import Widget_CommonBuy from './components/Widget_CommonBuy'
 import MarketDataFreshnessBar from './components/MarketDataFreshnessBar'
-import Widget_IndustryRotation from './components/Widget_IndustryRotation'
+const Widget_IndustryRotation = lazy(() => import('./components/Widget_IndustryRotation'))
 import useStore from './store/useStore'
 
 export default function App() {
@@ -106,7 +106,17 @@ export default function App() {
             </>
           )}
 
-          {activeTab === 'rotation' && <Widget_IndustryRotation />}
+          {activeTab === 'rotation' && (
+            <Suspense
+              fallback={
+                <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-10 text-center text-slate-500 text-sm">
+                  載入產業輪動…
+                </div>
+              }
+            >
+              <Widget_IndustryRotation />
+            </Suspense>
+          )}
 
           {activeTab === 'broker' && (
             <Widget_BrokerFlow />

@@ -10,17 +10,14 @@ HTTP 請求以 asyncio.gather 並行發出。
 from __future__ import annotations
 
 import asyncio
-import os
 from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-import aiohttp
 from sqlalchemy import text
 
 from app.models.database import SessionLocal
-
-FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+from app.services.finmind_client import FinMindQuotaError, finmind_get, get_shared_session
 
 _MARKET_UPSERT_SQL = text(
     """
@@ -56,39 +53,19 @@ INDUSTRY_PROXY_STOCKS: list[tuple[str, str]] = [
 GENERIC_INDUSTRY_BUCKETS = frozenset({"電子工業", "其他", "其他電子業"})
 
 
-def _token() -> str:
-    return os.getenv("FINMIND_TOKEN", "")
-
-
 async def _get_finmind(
+    session,
     dataset: str,
     data_id: str,
     start_date: str,
     end_date: str = "",
 ) -> list[dict[str, Any]]:
-    params: dict[str, str] = {
-        "dataset": dataset,
-        "data_id": data_id,
-        "start_date": start_date,
-    }
-    if end_date:
-        params["end_date"] = end_date
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; LiquidChip/1.0)",
-        "Authorization": f"Bearer {_token()}",
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            FINMIND_URL,
-            params=params,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=120),
-        ) as resp:
-            if resp.status == 402:
-                raise RuntimeError("FinMind API 配額已用盡")
-            resp.raise_for_status()
-            body = await resp.json(content_type=None)
-            return body.get("data", [])
+    try:
+        return await finmind_get(
+            session, dataset, data_id, start_date, end_date, timeout=120.0
+        )
+    except FinMindQuotaError:
+        raise RuntimeError("FinMind API 配額已用盡")
 
 
 def _pick_industry_category(rows: list[dict[str, Any]]) -> str:
@@ -134,7 +111,8 @@ def _track_latest(d: str, current: date | None) -> date | None:
 async def sync_stock_industries() -> date | None:
     """TaiwanStockInfo → stock_industry（單次約三千筆）"""
     start = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
-    rows = await _get_finmind("TaiwanStockInfo", "", start)
+    session = await get_shared_session()
+    rows = await _get_finmind(session, "TaiwanStockInfo", "", start)
     if not rows:
         print("[industry] TaiwanStockInfo 無資料")
         return None
@@ -169,12 +147,13 @@ async def sync_market_series_daily(days: int = 0) -> date | None:
     start = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
     latest: date | None = None
 
-    # 並行發出全部 10 個 HTTP 請求（2 指數 + 8 代理股）
+    # 並行發出全部 10 個 HTTP 請求（2 指數 + 8 代理股），共用 Session
+    session = await get_shared_session()
     index_labels = [("TAIEX", "加權報酬指數"), ("TPEx", "櫃買報酬指數")]
     results = await asyncio.gather(
-        *[_get_finmind("TaiwanStockTotalReturnIndex", idx_id, start)
+        *[_get_finmind(session, "TaiwanStockTotalReturnIndex", idx_id, start)
           for idx_id, _ in index_labels],
-        *[_get_finmind("TaiwanStockPrice", stock_id, start)
+        *[_get_finmind(session, "TaiwanStockPrice", stock_id, start)
           for _, stock_id in INDUSTRY_PROXY_STOCKS],
     )
     index_results = list(zip(index_labels, results[:2]))

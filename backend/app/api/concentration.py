@@ -1,36 +1,22 @@
 import asyncio
-import os
 import aiohttp
 from collections import defaultdict
 from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException
 
+from app.services.finmind_client import FinMindQuotaError, finmind_get, get_shared_session
+
 router = APIRouter()
-
-FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
-
-
-def _token() -> str:
-    return os.getenv("FINMIND_TOKEN", "")
 
 
 async def _get_finmind(dataset: str, data_id: str, start_date: str) -> list:
-    params = {"dataset": dataset, "data_id": data_id, "start_date": start_date}
-    headers = {"Authorization": f"Bearer {_token()}"}
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                FINMIND_URL, params=params, headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                if resp.status == 402:
-                    raise HTTPException(status_code=503, detail="FinMind API 配額已耗盡，請明日再試")
-                body = await resp.json(content_type=None)
-                if body.get("status") != 200:
-                    return []
-                return body.get("data", [])
-    except HTTPException:
-        raise
+        session = await get_shared_session()
+        return await finmind_get(
+            session, dataset, data_id, start_date, timeout=30.0
+        )
+    except FinMindQuotaError:
+        raise HTTPException(status_code=503, detail="FinMind API 配額已耗盡，請明日再試")
     except (aiohttp.ClientError, TimeoutError) as e:
         raise HTTPException(status_code=503, detail=f"FinMind API 暫時無法連線: {e}")
 

@@ -32,20 +32,57 @@ class IndustryRow:
     signal_reasons: list[str]
 
 
-def _load_series(db: Session, series_id: str) -> list[tuple[str, float]]:
+def _load_series_many(db: Session, series_ids: list[str]) -> dict[str, list[tuple[str, float]]]:
+    """一次載入多個 series_id 的 (date, close)，依日期升序。"""
+    if not series_ids:
+        return {}
+    uniq = list(dict.fromkeys(series_ids))
+    placeholders = ",".join(f":id{i}" for i in range(len(uniq)))
+    params = {f"id{i}": sid for i, sid in enumerate(uniq)}
     rows = db.execute(
         text(
-            "SELECT date, close FROM market_series_daily WHERE series_id = :s ORDER BY date ASC"
+            f"SELECT series_id, date, close FROM market_series_daily "
+            f"WHERE series_id IN ({placeholders}) ORDER BY series_id, date ASC"
         ),
-        {"s": series_id},
+        params,
     ).fetchall()
-    out: list[tuple[str, float]] = []
-    for r in rows:
-        d = str(r[0])[:10]
-        c = float(r[1] or 0)
+    out: dict[str, list[tuple[str, float]]] = {sid: [] for sid in uniq}
+    for series_id, dt, close in rows:
+        sid = str(series_id)
+        d = str(dt)[:10]
+        c = float(close or 0)
         if d and c > 0:
-            out.append((d, c))
+            out.setdefault(sid, []).append((d, c))
     return out
+
+
+def _latest_names_by_series(db: Session, series_ids: list[str]) -> dict[str, str]:
+    """各 series 最新一筆日線的 name（顯示用）。"""
+    if not series_ids:
+        return {}
+    uniq = list(dict.fromkeys(series_ids))
+    placeholders = ",".join(f":id{i}" for i in range(len(uniq)))
+    params = {f"id{i}": sid for i, sid in enumerate(uniq)}
+    rows = db.execute(
+        text(
+            f"""
+            SELECT m.series_id, m.name
+            FROM market_series_daily m
+            INNER JOIN (
+                SELECT series_id, MAX(date) AS max_d
+                FROM market_series_daily
+                WHERE series_id IN ({placeholders})
+                GROUP BY series_id
+            ) t ON m.series_id = t.series_id AND m.date = t.max_d
+            """
+        ),
+        params,
+    ).fetchall()
+    return {str(r[0]): str(r[1]) for r in rows}
+
+
+def _load_series(db: Session, series_id: str) -> list[tuple[str, float]]:
+    return _load_series_many(db, [series_id]).get(series_id, [])
 
 
 def _pct_change(prev: float, cur: float) -> float:
@@ -89,7 +126,11 @@ def _daily_ranks(
 
 
 def compute_rotation(db: Session, lookback: int = 120) -> dict[str, Any]:
-    bench = _load_series(db, BENCHMARK_ID)
+    industries_meta = [(f"IND:{name}", name, stock) for name, stock in INDUSTRY_PROXY_STOCKS]
+    series_ids = [BENCHMARK_ID] + [sid for sid, _, _ in industries_meta]
+    loaded = _load_series_many(db, series_ids)
+    bench = loaded.get(BENCHMARK_ID, [])
+
     if len(bench) < 30:
         return {
             "as_of": None,
@@ -98,7 +139,7 @@ def compute_rotation(db: Session, lookback: int = 120) -> dict[str, Any]:
             "industries": [],
         }
 
-    industries_meta = [(f"IND:{name}", name, stock) for name, stock in INDUSTRY_PROXY_STOCKS]
+    name_map = _latest_names_by_series(db, [sid for sid, _, _ in industries_meta])
 
     # 最近 lookback 個對齊交易日（以 benchmark 尾端裁切）
     bench_tail = bench[-lookback:] if len(bench) > lookback else bench
@@ -110,20 +151,15 @@ def compute_rotation(db: Session, lookback: int = 120) -> dict[str, Any]:
     name_by_sid: dict[str, str] = {}
 
     for sid, ind_name, proxy in industries_meta:
-        raw = _load_series(db, sid)
+        raw = loaded.get(sid, [])
         if not raw:
             continue
         al = _align(bench, raw)
         rs_seq = _compute_rs_series(al)
         aligned_by_ind[sid] = rs_seq
         rs_by_ind[sid] = {d: rs for d, _, _, rs in rs_seq}
-        if raw:
-            latest_close[sid] = raw[-1][1]
-        row = db.execute(
-            text("SELECT name FROM market_series_daily WHERE series_id = :s ORDER BY date DESC LIMIT 1"),
-            {"s": sid},
-        ).fetchone()
-        name_by_sid[sid] = str(row[0]) if row else f"{ind_name}（{proxy}）"
+        latest_close[sid] = raw[-1][1]
+        name_by_sid[sid] = name_map.get(sid, f"{ind_name}（{proxy}）")
 
     if not rs_by_ind:
         return {
@@ -158,9 +194,8 @@ def compute_rotation(db: Session, lookback: int = 120) -> dict[str, Any]:
             continue
         rs_map = rs_by_ind[sid]
         rs_today = rs_map.get(as_of)
-        rs_prev = rs_map.get(prev_as_of)
+        raw = loaded.get(sid, [])
         dr_ind = None
-        raw = _load_series(db, sid)
         if len(raw) >= 2 and raw[-1][0] == as_of:
             dr_ind = _pct_change(raw[-2][1], raw[-1][1])
 
@@ -251,7 +286,9 @@ def compute_rotation(db: Session, lookback: int = 120) -> dict[str, Any]:
 
 def build_chart_pack(db: Session, days: int = 180) -> dict[str, Any]:
     """正規化到視窗首日=100 的走勢（方便小圖對比）"""
-    bench = _load_series(db, BENCHMARK_ID)
+    ind_ids = [f"IND:{n}" for n, _ in INDUSTRY_PROXY_STOCKS]
+    loaded = _load_series_many(db, [BENCHMARK_ID] + ind_ids)
+    bench = loaded.get(BENCHMARK_ID, [])
     if not bench:
         return {"benchmark": [], "series": {}}
 
@@ -271,14 +308,13 @@ def build_chart_pack(db: Session, days: int = 180) -> dict[str, Any]:
         "benchmark": norm(bench),
         "series": {},
     }
+    d0, d1 = bench[0][0], bench[-1][0]
     for ind_name, proxy in INDUSTRY_PROXY_STOCKS:
         sid = f"IND:{ind_name}"
-        raw = _load_series(db, sid)
+        raw = loaded.get(sid, [])
         if not raw:
             continue
         raw = raw[-days:] if len(raw) > days else raw
-        # 對齊 benchmark 日期區間
-        d0, d1 = bench[0][0], bench[-1][0]
         filtered = [(d, c) for d, c in raw if d0 <= d <= d1]
         if len(filtered) < 5:
             continue

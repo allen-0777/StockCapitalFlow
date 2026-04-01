@@ -1,15 +1,46 @@
 from sqlalchemy import create_engine, Column, String, Date, Numeric, Integer, ForeignKey, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from datetime import datetime
+import json
 import os
+import time
 
 # ---------------------------------------------------------------------------
-# In-memory TTL cache (no Redis required)
+# TTL cache：預設程序內記憶體；若設定 REDIS_URL 且已安裝 redis 則跨程序共用
 # ---------------------------------------------------------------------------
 _cache: dict = {}
+_redis_client = None
+_redis_init_failed = False
+
+
+def _redis_conn():
+    global _redis_client, _redis_init_failed
+    url = (os.getenv("REDIS_URL") or "").strip()
+    if not url or _redis_init_failed:
+        return None
+    if _redis_client is None:
+        try:
+            import redis as redis_mod
+
+            _redis_client = redis_mod.from_url(url, decode_responses=True)
+        except Exception:
+            _redis_init_failed = True
+            return None
+    return _redis_client
 
 
 def cache_get(key: str, ttl_seconds: int):
+    r = _redis_conn()
+    if r is not None:
+        try:
+            raw = r.get(f"lc:{key}")
+            if raw:
+                obj = json.loads(raw)
+                if time.time() - float(obj["ts"]) < ttl_seconds:
+                    return obj["data"]
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            pass
+        return None
     if key in _cache:
         value, ts = _cache[key]
         if (datetime.now() - ts).total_seconds() < ttl_seconds:
@@ -18,11 +49,28 @@ def cache_get(key: str, ttl_seconds: int):
 
 
 def cache_set(key: str, value):
+    r = _redis_conn()
+    if r is not None:
+        try:
+            r.set(
+                f"lc:{key}",
+                json.dumps({"ts": time.time(), "data": value}, default=str),
+            )
+        except (TypeError, ValueError):
+            pass
+        return
     _cache[key] = (value, datetime.now())
 
 
 def cache_clear():
     _cache.clear()
+    r = _redis_conn()
+    if r is not None:
+        try:
+            for k in r.scan_iter(match="lc:*"):
+                r.delete(k)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
