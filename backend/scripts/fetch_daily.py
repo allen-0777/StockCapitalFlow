@@ -37,6 +37,8 @@ JOBS: dict[str, list[str]] = {
     "industry":      ["sync_stock_industries", "sync_market_series_daily"],
 }
 
+DATA_READY_HOUR = 15  # 台北時間
+
 # industry 在非交易日也要跑（產業資料不依賴當日行情）
 TRADING_DAY_EXEMPT = {"industry"}
 
@@ -44,9 +46,11 @@ TRADING_DAY_EXEMPT = {"industry"}
 async def run(job_names: list[str], *, force: bool = False) -> int:
     """執行指定 job，回傳失敗數。force=True 時略過「非交易日跳過」（industry 本來就不跳過）。"""
     failures = 0
-    today = datetime.now(ZoneInfo("Asia/Taipei")).date()
+    now = datetime.now(ZoneInfo("Asia/Taipei"))
+    today = now.date()
     trading_today = is_trading_day(today)
-    expected = latest_trading_day(today)
+    # 盤後資料約 15:00 後才陸續公布；之前手動執行時以前一個交易日為預期日期
+    expected = latest_trading_day(today if now.hour >= DATA_READY_HOUR else today - timedelta(days=1))
     # force 補抓與非交易日手動執行不要求當日行情；例外仍算失敗。
     check_freshness = trading_today and not force
     stale = []
@@ -87,9 +91,9 @@ async def run(job_names: list[str], *, force: bool = False) -> int:
     return failures
 
 
-# 補資料：TWSE 端點支援指定日期；TAIFEX OpenAPI（期貨/選擇權）與台銀匯率只提供最新一日，無法回補
+# 補資料：TWSE 端點支援指定日期、匯率走 FinMind 區間；TAIFEX OpenAPI（期貨/選擇權）只提供最新一日，無法回補
 BACKFILL_TWSE_FNS = ["fetch_institutional_market", "fetch_institutional_stocks", "fetch_margin", "fetch_turnover"]
-BACKFILL_FINMIND_REQUESTS = 10  # sync_market_series_daily：2 指數 + 8 代理股，一次抓整段區間
+BACKFILL_FINMIND_REQUESTS = 11  # 匯率 1 次 + sync_market_series_daily（2 指數 + 8 代理股），皆一次抓整段區間
 
 
 def backfill_days(start: date, end: date) -> list[date]:
@@ -109,7 +113,7 @@ async def backfill(start: date, end: date, *, interval_s: float = 3.0, dry_run: 
     print(f"[backfill] {start}..{end}: {len(days)} 個交易日，TWSE 約 {twse_requests} 次請求"
           f"（間隔 {interval_s}s，約 {round(twse_requests * interval_s / 60)} 分鐘），"
           f"FinMind {BACKFILL_FINMIND_REQUESTS} 次")
-    print("[backfill] 期貨/選擇權（TAIFEX OpenAPI）與匯率（台銀）僅提供最新資料，不在回補範圍")
+    print("[backfill] 期貨/選擇權（TAIFEX OpenAPI）僅提供最新資料，不在回補範圍")
     if dry_run:
         return 0
 
@@ -129,6 +133,12 @@ async def backfill(start: date, end: date, *, interval_s: float = 3.0, dry_run: 
                     print(f"[backfill] {fn_name} {d} ERROR: {e}")
                     failures += 1
                 await asyncio.sleep(interval_s)  # TWSE 對短時間大量請求會封鎖 IP
+        try:
+            latest_fx = await _fetcher.fetch_exchange_rate(start=start)
+            print(f"[backfill] exchange_rate from {start} → latest={latest_fx}")
+        except Exception as e:
+            print(f"[backfill] fetch_exchange_rate ERROR: {e}")
+            failures += 1
         days_back = (_taipei_today() - start).days + 1
         try:
             latest = await _fetcher.sync_market_series_daily(days=days_back)

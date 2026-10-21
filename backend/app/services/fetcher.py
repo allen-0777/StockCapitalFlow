@@ -70,10 +70,11 @@ async def _get_json_with_retry(url: str, max_retries: int = 3) -> dict:
     for attempt in range(max_retries):
         try:
             return await _get_json(url)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            # ValueError：TWSE 限流時回 HTML 而非 JSON（JSONDecodeError），稍等再試
             if attempt == max_retries - 1:
                 raise
-            wait = 2 ** attempt
+            wait = 5 * 2 ** attempt
             print(f"[fetcher] retry {attempt + 1}/{max_retries - 1} after {wait}s: {e}")
             await asyncio.sleep(wait)
 
@@ -88,6 +89,15 @@ def _parse_twse_date(data: dict) -> date:
     except ValueError:
         _logger.warning("Rejected payload with invalid TWSE date: %r", raw)
         raise ValueError(f"Invalid TWSE date: {raw!r}") from None
+
+
+def _parse_roc_date(raw) -> date:
+    """民國日期 '115/10/20' → date(2026, 10, 20)；無效則拒絕。"""
+    try:
+        y, m, d = (int(x) for x in str(raw).strip().split("/"))
+        return date(y + 1911, m, d)
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid ROC date: {raw!r}") from None
 
 
 def _upsert_chip(db: Session, today: date, stock_id: str, **kwargs):
@@ -457,18 +467,19 @@ async def fetch_turnover(target: date | None = None):
         if data.get("stat") != "OK" or not data.get("data"):
             raise RuntimeError(f"TWSE FMTQIK stat={data.get('stat')}")
 
-        trading_date = _parse_twse_date(data)
-        # 預設取最後一筆（最新交易日）；補資料時取 target 當日（日期欄為民國年 115/04/01）
-        row = data["data"][-1]
+        # 預設取最後一筆（最新交易日）；日期取該列的民國日期（data["date"] 只是查詢日，盤中會是今天）
+        # 補資料時取 target 當日那一列
+        last = data["data"][-1]
         if target:
             roc = f"{target.year - 1911}/{target:%m/%d}"
             matches = [r for r in data["data"] if r and str(r[0]).strip() == roc]
             if not matches:
                 raise ValueError(f"FMTQIK has no row for {target}")
-            row, trading_date = matches[0], target
-        valid_rows = list(_valid_rows([row], (2,)))
+            last = matches[0]
+        valid_rows = list(_valid_rows([last], (2,)))
         if not valid_rows:
             raise ValueError("Invalid turnover")
+        trading_date = _parse_roc_date(last[0])
         # 成交金額欄位（元），轉億
         volume = _parse_num(valid_rows[0][2])
         volume_yi = round(volume / 1e8, 2)
@@ -486,57 +497,43 @@ async def fetch_turnover(target: date | None = None):
         raise
 
 
-async def fetch_exchange_rate():
-    """抓台銀美金現金買入/賣出匯率"""
-    import re
-    from bs4 import BeautifulSoup
+async def fetch_exchange_rate(start: date | None = None):
+    """台銀美金現金買入/賣出匯率（FinMind TaiwanExchangeRate，資料來源同台銀牌告）。
+    台銀網站對 GitHub runner 回傳 WAF 驗證頁，無法直接爬取；FinMind 一次請求可取整段區間，
+    預設抓近 10 天（補漏），start 指定時從該日起回補。回傳最新資料日。"""
+    from datetime import timedelta
+    from app.services.finmind_client import finmind_get, get_shared_session
 
     t0 = time.monotonic()
     try:
-        url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; LiquidChip/1.0)"}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers,
-                                   timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                html_text = await resp.text()
-
-        soup = BeautifulSoup(html_text, "html.parser")
-        table = soup.find("table", attrs={"title": "牌告匯率"})
-        if not table:
-            raise RuntimeError("找不到台銀牌告匯率表格")
-
-        first_row = table.find("tbody").find("tr")  # 第一列 = 美金
-        buy_td = first_row.find("td", attrs={"data-table": "本行現金買入"})
-        sell_td = first_row.find("td", attrs={"data-table": "本行現金賣出"})
-
-        if not buy_td or not sell_td:
-            raise RuntimeError("找不到美金匯率欄位")
-
-        usd_buy = float(buy_td.get_text(strip=True))
-        usd_sell = float(sell_td.get_text(strip=True))
-        today = _taipei_today()
+        start = start or (_taipei_today() - timedelta(days=10))
+        session = await get_shared_session()
+        rows = await finmind_get(session, "TaiwanExchangeRate", "USD", start.isoformat())
+        params = []
+        for r in rows:
+            try:
+                d = date.fromisoformat(str(r["date"])[:10])
+                buy, sell = float(r["cash_buy"]), float(r["cash_sell"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if buy > 0 and sell > 0:
+                params.append({"d": d, "b": buy, "s": sell})
+        if not params:
+            raise RuntimeError(f"FinMind TaiwanExchangeRate 無有效資料（start={start}）")
 
         with SessionLocal() as db:
-            from sqlalchemy import text as sa_text
-            existing = db.execute(
-                sa_text("SELECT date FROM daily_exchange_rate WHERE date=:d"),
-                {"d": today}
-            ).fetchone()
-            if existing:
-                db.execute(
-                    sa_text("UPDATE daily_exchange_rate SET usd_buy=:b, usd_sell=:s WHERE date=:d"),
-                    {"b": usd_buy, "s": usd_sell, "d": today}
-                )
-            else:
-                db.execute(
-                    sa_text("INSERT INTO daily_exchange_rate (date, usd_buy, usd_sell) VALUES (:d, :b, :s)"),
-                    {"d": today, "b": usd_buy, "s": usd_sell}
-                )
+            db.execute(
+                text("INSERT INTO daily_exchange_rate (date, usd_buy, usd_sell) VALUES (:d, :b, :s) "
+                     "ON CONFLICT (date) DO UPDATE SET usd_buy = EXCLUDED.usd_buy, usd_sell = EXCLUDED.usd_sell"),
+                params,
+            )
             db.commit()
 
+        latest = max(p["d"] for p in params)
+        last = next(p for p in params if p["d"] == latest)
         elapsed = round(time.monotonic() - t0, 1)
-        print(f"[fetcher][exchange_rate] USD buy={usd_buy} sell={usd_sell} in {elapsed}s")
-        return today
+        print(f"[fetcher][exchange_rate] {len(params)} 天，最新 {latest} USD buy={last['b']} sell={last['s']} in {elapsed}s")
+        return latest
     except Exception:
         elapsed = round(time.monotonic() - t0, 1)
         print(f"[fetcher][exchange_rate] ERROR in {elapsed}s")

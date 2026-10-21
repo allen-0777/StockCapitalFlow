@@ -36,7 +36,7 @@ on:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # 區間補資料約 30 分鐘
+    timeout-minutes: 180  # 區間補資料：每個交易日 T86 寫入約 30s，建議每次 1～2 個月
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +51,7 @@ jobs:
       # FETCH_JOBS / FETCH_FORCE 透過 env 傳入，避免將 workflow input 直接拼入 run 指令（安全規範）
       - name: Run fetch
         env:
+          PYTHONUNBUFFERED: '1'   # 被 timeout 取消時仍保留已輸出的 log
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           FETCH_JOBS: ${{ inputs.jobs || 'all' }}

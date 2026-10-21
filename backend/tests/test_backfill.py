@@ -20,14 +20,17 @@ async def test_backfill_calls_twse_per_day_and_market_series_once():
     days = [date(2026, 4, 7), date(2026, 4, 8)]
     mocks = {n: AsyncMock(side_effect=lambda target: target) for n in fetch_daily.BACKFILL_TWSE_FNS}
     series = AsyncMock(return_value=date(2026, 4, 8))
+    fx = AsyncMock(return_value=date(2026, 4, 8))
     with patch.object(fetch_daily, "backfill_days", return_value=days), \
          patch.multiple(fetcher, **mocks), patch.object(fetcher, "sync_market_series_daily", series), \
+         patch.object(fetcher, "fetch_exchange_rate", fx), \
          patch.object(fetch_daily, "_taipei_today", return_value=date(2026, 4, 10)), \
          patch.object(fm, "close_shared_session", AsyncMock()):
         assert await fetch_daily.backfill(days[0], days[-1], interval_s=0) == 0
     for m in mocks.values():
         assert [c.kwargs["target"] for c in m.call_args_list] == days
     series.assert_awaited_once_with(days=4)
+    fx.assert_awaited_once_with(start=days[0])
 
 
 @pytest.mark.asyncio
@@ -37,6 +40,7 @@ async def test_backfill_counts_date_mismatch_as_failure():
     mocks = {n: AsyncMock(return_value=date(2026, 4, 6)) for n in fetch_daily.BACKFILL_TWSE_FNS}
     with patch.object(fetch_daily, "backfill_days", return_value=[d]), patch.multiple(fetcher, **mocks), \
          patch.object(fetcher, "sync_market_series_daily", AsyncMock()), \
+         patch.object(fetcher, "fetch_exchange_rate", AsyncMock()), \
          patch.object(fm, "close_shared_session", AsyncMock()):
         assert await fetch_daily.backfill(d, d, interval_s=0) == len(fetch_daily.BACKFILL_TWSE_FNS)
 
