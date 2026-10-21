@@ -76,12 +76,19 @@ def cache_clear():
 # ---------------------------------------------------------------------------
 # Database connection — SQLite (local dev) or PostgreSQL (production)
 # ---------------------------------------------------------------------------
+def normalize_db_url(url: str) -> str:
+    """Render / Supabase 可能給 postgres:// 舊格式；SQLAlchemy 2.1 起 postgresql:// 預設驅動
+    改為 psycopg (v3)，本專案安裝的是 psycopg2-binary，因此明確指定 +psycopg2。"""
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url
+
+
 _db_url = os.getenv("DATABASE_URL")
 if _db_url:
-    # Render / Supabase 可能給 postgres:// 舊格式，SQLAlchemy 需要 postgresql://
-    if _db_url.startswith("postgres://"):
-        _db_url = _db_url.replace("postgres://", "postgresql://", 1)
-    DATABASE_URL = _db_url
+    DATABASE_URL = normalize_db_url(_db_url)
     engine = create_engine(
         DATABASE_URL,
         pool_size=2,

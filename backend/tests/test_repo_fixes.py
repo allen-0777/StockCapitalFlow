@@ -335,3 +335,11 @@ def test_daily_main_exits_nonzero_on_failure(monkeypatch):
     with patch.object(fetch_daily, 'init_db'), patch.object(fetch_daily, 'run', AsyncMock(return_value=1)), pytest.raises(SystemExit) as exc:
         fetch_daily.main()
     assert exc.value.code == 1
+
+
+def test_normalize_db_url_uses_installed_psycopg2_driver():
+    from app.models.database import normalize_db_url
+    assert normalize_db_url("postgres://u:p@h:6543/db") == "postgresql+psycopg2://u:p@h:6543/db"
+    assert normalize_db_url("postgresql://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
+    assert normalize_db_url("postgresql+psycopg2://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
+    assert normalize_db_url("sqlite:///x.db") == "sqlite:///x.db"
