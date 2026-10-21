@@ -42,6 +42,7 @@ jobs:
       # FETCH_JOBS / FETCH_FORCE 透過 env 傳入，避免將 workflow input 直接拼入 run 指令（安全規範）
       - name: Run fetch
         env:
+          PYTHONUNBUFFERED: '1'   # 被 timeout 取消時仍保留已輸出的 log
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           FETCH_JOBS: ${{ inputs.jobs || 'all' }}
