@@ -36,11 +36,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install --quiet \
-            sqlalchemy psycopg2-binary \
-            aiohttp beautifulsoup4 \
-            python-dotenv exchange-calendars
+        run: pip install -r backend/requirements.txt
 
       # 需要 secrets：DATABASE_URL（Supabase 連線字串）、FINMIND_TOKEN（FinMind API token）
       # FETCH_JOBS / FETCH_FORCE 透過 env 傳入，避免將 workflow input 直接拼入 run 指令（安全規範）

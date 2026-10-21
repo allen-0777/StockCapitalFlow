@@ -8,9 +8,7 @@
 name: Zheng2 Radar Push
 
 on:
-  schedule:
-    # UTC 10:10 = CST 18:10，fetch-direct 結束後約 40 分鐘，週一至五
-    - cron: '10 10 * * 1-5'
+  # Schedule disabled until backend/app/services/zheng2_radar.py is restored.
   workflow_dispatch: {}   # 手動補推播用
 
 jobs:
@@ -25,7 +23,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install --quiet sqlalchemy psycopg2-binary aiohttp python-dotenv exchange-calendars
+        run: pip install -r backend/requirements.txt
 
       # TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 透過 env 傳入（secrets 不直接拼入指令）
       - name: Push Zheng2 Radar

@@ -15,6 +15,8 @@ import argparse
 import asyncio
 import sys
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 # 讓 Python 找得到 app 模組
@@ -25,7 +27,7 @@ load_dotenv()
 
 from app.models.database import init_db
 from app.services import fetcher as _fetcher
-from app.services.trading_calendar import is_trading_day
+from app.services.trading_calendar import is_trading_day, latest_trading_day
 
 # 與 admin.py 的 JOB_STEPS 對應
 JOBS: dict[str, list[str]] = {
@@ -42,6 +44,12 @@ TRADING_DAY_EXEMPT = {"industry"}
 async def run(job_names: list[str], *, force: bool = False) -> int:
     """執行指定 job，回傳失敗數。force=True 時略過「非交易日跳過」（industry 本來就不跳過）。"""
     failures = 0
+    today = datetime.now(ZoneInfo("Asia/Taipei")).date()
+    trading_today = is_trading_day(today)
+    expected = latest_trading_day(today)
+    # force 補抓與非交易日手動執行不要求當日行情；例外仍算失敗。
+    check_freshness = trading_today and not force
+    stale = []
     try:
         for job in job_names:
             if job not in JOBS:
@@ -49,7 +57,7 @@ async def run(job_names: list[str], *, force: bool = False) -> int:
                 failures += 1
                 continue
 
-            if not force and job not in TRADING_DAY_EXEMPT and not is_trading_day():
+            if not force and job not in TRADING_DAY_EXEMPT and not trading_today:
                 print(f"[{job}] 非交易日，跳過")
                 continue
 
@@ -60,6 +68,10 @@ async def run(job_names: list[str], *, force: bool = False) -> int:
                     result = await fn()
                     elapsed = round(time.monotonic() - t0, 1)
                     print(f"[{job}] {fn_name} → {result} ({elapsed}s)")
+                    # 產業分類是 metadata，不回傳行情日期。
+                    if check_freshness and fn_name != "sync_stock_industries" and str(result) != expected.isoformat():
+                        stale.append(f"{job}/{fn_name}: got={result}, expected={expected}")
+                        failures += 1
                 except Exception as e:
                     elapsed = round(time.monotonic() - t0, 1)
                     print(f"[{job}] {fn_name} ERROR ({elapsed}s): {e}")
@@ -70,6 +82,8 @@ async def run(job_names: list[str], *, force: bool = False) -> int:
 
         await close_shared_session()
 
+    if stale:
+        print("[ERROR] Stale/missing data: " + "; ".join(stale))
     return failures
 
 

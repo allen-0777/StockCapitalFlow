@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -8,8 +10,8 @@ router = APIRouter()
 
 @router.get("/api/v1/institutional/ranking")
 def institutional_ranking(
-    type: str = Query(default="foreign", enum=["foreign", "trust", "dealer", "total"]),
-    order: str = Query(default="buy", enum=["buy", "sell"]),
+    type: Literal["foreign", "trust", "dealer", "total"] = "foreign",
+    order: Literal["buy", "sell"] = "buy",
     limit: int = Query(default=20, ge=5, le=100),
     db: Session = Depends(get_db),
 ):

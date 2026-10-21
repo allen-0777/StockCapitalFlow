@@ -1,10 +1,12 @@
 import asyncio
+from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.models.database import get_db
 from app.services.finmind_fetcher import fetch_broker_daily, fetch_stock_price
 from app.services.broker_analysis import get_recent_flow, get_key_branches
+from app.api.deps import require_api_key
 
 router = APIRouter()
 
@@ -19,8 +21,8 @@ def _stock_name(db: Session, stock_id: str) -> str:
 def _date_range(db: Session, stock_id: str, days: int) -> dict:
     rows = db.execute(
         text("""SELECT MIN(date) AS from_d, MAX(date) AS to_d FROM broker_daily
-                WHERE stock_id=:s AND date >= date('now', :offset)"""),
-        {"s": stock_id, "offset": f"-{days} days"}
+                WHERE stock_id=:s AND date >= :cutoff"""),
+        {"s": stock_id, "cutoff": (date.today() - timedelta(days=days)).isoformat()}
     ).fetchone()
     return {"from": rows.from_d or "", "to": rows.to_d or ""}
 
@@ -52,7 +54,7 @@ def broker_keypoints(stock_id: str, lookforward: int = 5, days: int = 90,
     }
 
 
-@router.post("/api/v1/stocks/{stock_id}/broker/fetch")
+@router.post("/api/v1/stocks/{stock_id}/broker/fetch", dependencies=[Depends(require_api_key)])
 async def broker_fetch(stock_id: str):
     """手動觸發抓取指定股票的分點資料（broker + price）"""
     try:

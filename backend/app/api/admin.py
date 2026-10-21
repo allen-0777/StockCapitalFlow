@@ -11,7 +11,6 @@ target_date（選填，YYYY-MM-DD）：
   但 API 仍為昨日資料」時，將 expected 對齊該日以便 skip/force 判斷正確。
 """
 import asyncio
-import os
 import time
 from datetime import date
 from fastapi import APIRouter, HTTPException, Depends
@@ -31,7 +30,9 @@ from app.services.notification import (
     send_daily_digest,
 )
 
-router = APIRouter()
+from app.api.deps import require_trigger_secret
+
+router = APIRouter(dependencies=[Depends(require_trigger_secret)])
 
 ALL_JOBS = ("institutional", "futures", "margin", "industry")
 
@@ -210,10 +211,6 @@ async def trigger_all(
     force: bool = False,
     target_date: str = "",
 ):
-    expected_secret = os.getenv("TRIGGER_SECRET", "")
-    if not expected_secret or secret != expected_secret:
-        raise HTTPException(status_code=403, detail="Invalid secret")
-
     if not is_trading_day():
         return {"status": "skipped", "reason": "非台股交易日"}
 
@@ -270,10 +267,6 @@ async def trigger_job(
     force: bool = False,
     target_date: str = "",
 ):
-    expected_secret = os.getenv("TRIGGER_SECRET", "")
-    if not expected_secret or secret != expected_secret:
-        raise HTTPException(status_code=403, detail="Invalid secret")
-
     if job not in JOB_STEPS:
         raise HTTPException(status_code=404, detail=f"Unknown job: {job}. Valid: {list(JOB_STEPS)}")
 
@@ -307,10 +300,6 @@ async def trigger_job(
 @router.get("/api/v1/admin/job-status/{job}")
 async def job_status(job: str, secret: str = ""):
     """Polling endpoint — workflow 用來查背景 job 是否完成"""
-    expected_secret = os.getenv("TRIGGER_SECRET", "")
-    if not expected_secret or secret != expected_secret:
-        raise HTTPException(status_code=403, detail="Invalid secret")
-
     result = _job_results.get(job)
     if not result:
         return {"status": "unknown", "job": job}
@@ -322,9 +311,5 @@ async def job_status(job: str, secret: str = ""):
 @router.post("/api/v1/admin/daily-digest")
 async def daily_digest(secret: str = "", db: Session = Depends(get_db)):
     """每日彙整推播（含假日）；由 GitHub Actions 另排程觸發。"""
-    expected_secret = os.getenv("TRIGGER_SECRET", "")
-    if not expected_secret or secret != expected_secret:
-        raise HTTPException(status_code=403, detail="Invalid secret")
-
     await send_daily_digest(db)
     return {"status": "ok"}

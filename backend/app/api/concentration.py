@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException
 
-from app.services.finmind_client import FinMindQuotaError, finmind_get, get_shared_session
+from app.services.finmind_client import FinMindAPIError, FinMindQuotaError, finmind_get, get_shared_session
 
 router = APIRouter()
 
@@ -17,7 +17,7 @@ async def _get_finmind(dataset: str, data_id: str, start_date: str) -> list:
         )
     except FinMindQuotaError:
         raise HTTPException(status_code=503, detail="FinMind API 配額已耗盡，請明日再試")
-    except (aiohttp.ClientError, TimeoutError) as e:
+    except (FinMindAPIError, aiohttp.ClientError, TimeoutError) as e:
         raise HTTPException(status_code=503, detail=f"FinMind API 暫時無法連線: {e}")
 
 

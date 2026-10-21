@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { apiKeyHeaders } from '../apiHeaders'
 
 const useStore = create((set) => ({
   activeTab: 'overview',
@@ -10,13 +11,13 @@ const useStore = create((set) => ({
   addStock: async (stockId) => {
     await fetch(`/api/v1/users/1/watchlist`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...apiKeyHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ stock_id: stockId }),
     })
   },
 
   removeStock: async (stockId) => {
-    await fetch(`/api/v1/users/1/watchlist/${stockId}`, { method: 'DELETE' })
+    await fetch(`/api/v1/users/1/watchlist/${stockId}`, { method: 'DELETE', headers: apiKeyHeaders })
   },
 }))
 

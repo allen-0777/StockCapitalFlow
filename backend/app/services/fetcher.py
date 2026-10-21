@@ -1,8 +1,13 @@
 import asyncio
+import logging
+import math
 import ssl
 import time
-import aiohttp
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+import aiohttp
+import certifi
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.models.database import SessionLocal
@@ -13,10 +18,34 @@ TAIFEX_BASE = "https://openapi.taifex.com.tw/v1"
 # FinMind TaiwanOptionDaily（各履約價 OI）仍可能延遲數日，保留回溯天數設定
 FINMIND_LOOKBACK_DAYS = 14
 
-# Python 3.14 對 TWSE 憑證（缺 Subject Key Identifier）驗證失敗，略過憑證驗證
-_ssl_ctx = ssl.create_default_context()
-_ssl_ctx.check_hostname = False
-_ssl_ctx.verify_mode = ssl.CERT_NONE
+# Python 3.14 的嚴格檢查拒絕 TWSE 缺 Subject Key Identifier 的憑證。
+# 僅關閉 VERIFY_X509_STRICT，保留 CA 驗證與主機名稱檢查。
+_ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+_ssl_ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+_logger = logging.getLogger(__name__)
+
+
+def _valid_rows(rows, numeric_indices=(), numeric_keys=(), target_date=None):
+    rejected = 0
+    for row in rows:
+        try:
+            if target_date and row.get("Date") != target_date:
+                raise ValueError("mismatched date")
+            for index in numeric_indices:
+                if _parse_num(row[index]) is None:
+                    raise ValueError("invalid number")
+            for key in numeric_keys:
+                if _parse_num(row.get(key)) is None:
+                    raise ValueError("invalid number")
+            yield row
+        except (ValueError, IndexError, KeyError, TypeError, AttributeError):
+            rejected += 1
+    if rejected:
+        _logger.warning("Rejected %d malformed rows", rejected)
+
+
+def _taipei_today():
+    return datetime.now(ZoneInfo("Asia/Taipei")).date()
 
 
 async def _get_json(url: str) -> dict:
@@ -50,14 +79,15 @@ async def _get_json_with_retry(url: str, max_retries: int = 3) -> dict:
 
 
 def _parse_twse_date(data: dict) -> date:
-    """從 TWSE API 回應中解析實際交易日期（格式：YYYYMMDD），fallback 為今日"""
+    """解析實際交易日；無效日期拒絕寫入。"""
     raw = data.get("date") or data.get("Date")
-    if raw:
-        try:
-            return datetime.strptime(str(raw), "%Y%m%d").date()
-        except ValueError:
-            pass
-    return date.today()
+    try:
+        if len(str(raw)) != 8:
+            raise ValueError("Expected YYYYMMDD")
+        return datetime.strptime(str(raw), "%Y%m%d").date()
+    except ValueError:
+        _logger.warning("Rejected payload with invalid TWSE date: %r", raw)
+        raise ValueError(f"Invalid TWSE date: {raw!r}") from None
 
 
 def _upsert_chip(db: Session, today: date, stock_id: str, **kwargs):
@@ -80,11 +110,16 @@ def _upsert_chip(db: Session, today: date, stock_id: str, **kwargs):
         )
 
 
-def _parse_num(s: str) -> float:
+def _parse_num(s) -> float | None:
+    if s is None:
+        return None
+    if str(s).strip() in ("", "--", "-", "---"):
+        return 0.0  # 官方空白欄位表示無交易／無餘額
     try:
-        return float(s.replace(",", "").replace(" ", ""))
-    except (ValueError, AttributeError):
-        return 0.0
+        value = float(str(s).replace(",", "").replace(" ", ""))
+        return value if math.isfinite(value) else None
+    except (ValueError, TypeError):
+        return None
 
 
 async def fetch_institutional_market():
@@ -97,22 +132,24 @@ async def fetch_institutional_market():
         if data.get("stat") != "OK":
             raise RuntimeError(f"TWSE BFI82U stat={data.get('stat')}")
 
-        foreign_buy = trust_buy = dealer_buy = 0.0
-        for row in data.get("data", []):
+        foreign_buy = trust_buy = dealer_buy = None
+        for row in _valid_rows(data.get("data", []), (3,)):
             name = row[0]
             net = _parse_num(row[3]) / 1e8  # 元 → 億
             if "外資及陸資" in name:
-                foreign_buy += net
+                foreign_buy = (foreign_buy or 0.0) + net
             elif "投信" in name:
                 trust_buy = net
             elif "自營商" in name:
-                dealer_buy += net
+                dealer_buy = (dealer_buy or 0.0) + net
 
+        values = {key: round(value, 2) for key, value in {
+            "foreign_buy": foreign_buy, "trust_buy": trust_buy, "dealer_buy": dealer_buy,
+        }.items() if value is not None}
+        if not values:
+            raise ValueError("No valid institutional market rows")
         with SessionLocal() as db:
-            _upsert_chip(db, trading_date, "0000",
-                         foreign_buy=round(foreign_buy, 2),
-                         trust_buy=round(trust_buy, 2),
-                         dealer_buy=round(dealer_buy, 2))
+            _upsert_chip(db, trading_date, "0000", **values)
             db.commit()
 
         elapsed = round(time.monotonic() - t0, 1)
@@ -138,12 +175,12 @@ async def fetch_institutional_stocks():
         stock_params = []
         chip_params = []
 
-        for row in rows_data:
-            stock_id = row[0].strip()
+        for row in _valid_rows(rows_data, (4, 10, 11)):
+            stock_id = str(row[0]).strip()
             if not stock_id:
                 continue
             try:
-                stock_params.append({"s": stock_id, "n": row[1].strip()})
+                stock_params.append({"s": stock_id, "n": str(row[1]).strip()})
                 chip_params.append({
                     "date": trading_date, "stock_id": stock_id,
                     "foreign_buy": round(_parse_num(row[4]) / 1000, 4),
@@ -191,10 +228,10 @@ async def fetch_margin():
         if data.get("stat") != "OK":
             raise RuntimeError(f"TWSE MI_MARGN stat={data.get('stat')}")
 
-        margin_long_kth = 0   # 融資金額增減（千元）
-        margin_short = 0      # 融券增減（張）
+        margin_long_kth = None   # 融資金額增減（千元）
+        margin_short = None      # 融券增減（張）
         for table in data.get("tables", []):
-            for row in table.get("data", []):
+            for row in _valid_rows(table.get("data", []), (4, 5)):
                 if "融資金額" in row[0]:  # 融資金額(仟元)
                     prev = _parse_num(row[4])
                     today_val = _parse_num(row[5])
@@ -204,10 +241,13 @@ async def fetch_margin():
                     today_val = _parse_num(row[5])
                     margin_short = int(today_val - prev)      # 張增減
 
+        values = {key: value for key, value in {
+            "margin_long": margin_long_kth, "margin_short": margin_short,
+        }.items() if value is not None}
+        if not values:
+            raise ValueError("No valid margin rows")
         with SessionLocal() as db:
-            _upsert_chip(db, trading_date, "0000",
-                         margin_long=margin_long_kth,    # 存千元，API 層轉億元
-                         margin_short=margin_short)
+            _upsert_chip(db, trading_date, "0000", **values)
             db.commit()
 
         elapsed = round(time.monotonic() - t0, 1)
@@ -234,7 +274,10 @@ async def fetch_futures_oi():
         db_date = datetime.strptime(trade_date_str, "%Y%m%d").date()
 
         tx_foreign = tx_trust = mtx_foreign = None
-        for row in rows:
+        for row in _valid_rows(
+            rows, numeric_keys=("OpenInterest(Long)", "OpenInterest(Short)"),
+            target_date=trade_date_str,
+        ):
             code = row["ContractCode"]
             item = row["Item"]
             if code == "臺股期貨" and item == "外資及陸資":
@@ -248,16 +291,19 @@ async def fetch_futures_oi():
             raise RuntimeError(f"TAIFEX 找不到臺股期貨外資資料 (date={trade_date_str})")
 
         def _oi(row, side):
-            return int(_parse_num(row.get(f"OpenInterest({side})", "0"))) if row else 0
+            return int(_parse_num(row[f"OpenInterest({side})"])) if row else None
 
+        values = {
+            "tx_foreign_long": _oi(tx_foreign, "Long"),
+            "tx_foreign_short": _oi(tx_foreign, "Short"),
+            "mtx_retail_long": _oi(mtx_foreign, "Long"),
+            "mtx_retail_short": _oi(mtx_foreign, "Short"),
+            "trust_tx_long": _oi(tx_trust, "Long"),
+            "trust_tx_short": _oi(tx_trust, "Short"),
+        }
         with SessionLocal() as db:
             _upsert_chip(db, db_date, "0000",
-                         tx_foreign_long=_oi(tx_foreign, "Long"),
-                         tx_foreign_short=_oi(tx_foreign, "Short"),
-                         mtx_retail_long=_oi(mtx_foreign, "Long"),
-                         mtx_retail_short=_oi(mtx_foreign, "Short"),
-                         trust_tx_long=_oi(tx_trust, "Long"),
-                         trust_tx_short=_oi(tx_trust, "Short"))
+                         **{key: value for key, value in values.items() if value is not None})
             db.commit()
 
         elapsed = round(time.monotonic() - t0, 1)
@@ -273,7 +319,7 @@ async def fetch_options_data():
     """選擇權資料：
     - 外資 Call/Put 淨部位金額 → TAIFEX OpenAPI（當日盤後即有，與法人買賣超同步）
     - P/C Ratio、壓力區（各履約價 OI） → FinMind TaiwanOptionDaily（可能延遲數日）
-    db_date 以 TAIFEX 當日為準，P/C 為最近有資料日的 best-effort 填入。
+    db_date 以 TAIFEX 當日為準，僅填入同日 FinMind 資料。
     """
     from datetime import timedelta
 
@@ -287,8 +333,13 @@ async def fetch_options_data():
         trade_date_str = opt_rows[0]["Date"]  # "YYYYMMDD"
         db_date = datetime.strptime(trade_date_str, "%Y%m%d").date()
 
-        foreign_call_net_yi = foreign_put_net_yi = 0.0
-        for row in opt_rows:
+        foreign_call_net_yi = foreign_put_net_yi = None
+        for row in _valid_rows(
+            opt_rows,
+            numeric_keys=("ContractValueofOpenInterest(Long)(Thousands)",
+                          "ContractValueofOpenInterest(Short)(Thousands)"),
+            target_date=trade_date_str,
+        ):
             if row["ContractCode"] != "臺指選擇權" or row["Item"] != "外資及陸資":
                 continue
             long_kth  = _parse_num(row.get("ContractValueofOpenInterest(Long)(Thousands)", "0"))
@@ -299,16 +350,19 @@ async def fetch_options_data():
             elif row["CallPut"] == "PUT":
                 foreign_put_net_yi = round(net_kth / 100000, 2)
 
+        if foreign_call_net_yi is None and foreign_put_net_yi is None:
+            raise ValueError("No valid TAIFEX option rows")
+
         # --- 2. P/C Ratio、壓力區 from FinMind（best-effort，可能落後數日）---
         from app.services.finmind_client import finmind_get, get_shared_session
 
         pc_ratio = call_max_strike = put_max_strike = None
-        call_total_oi = put_total_oi = 0
+        call_total_oi = put_total_oi = None
         finmind_date = ""
 
         session = await get_shared_session()
         for days_back in range(0, FINMIND_LOOKBACK_DAYS):
-            d = (date.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+            d = (_taipei_today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
             body_rows = await finmind_get(
                 session,
                 "TaiwanOptionDaily",
@@ -322,7 +376,10 @@ async def fetch_options_data():
                 finmind_date = d
                 break
 
-        if finmind_date:
+        if finmind_date and finmind_date != db_date.isoformat():
+            _logger.warning("Skipping FinMind options date %s for TAIFEX %s", finmind_date, db_date)
+
+        if finmind_date == db_date.isoformat():
             contracts = sorted(set(row["contract_date"] for row in all_rows))
             near_month = contracts[0] if contracts else None
             if near_month:
@@ -333,9 +390,9 @@ async def fetch_options_data():
                         and r["date"] == finmind_date]
                 calls = [r for r in near if r["call_put"] == "call"]
                 puts  = [r for r in near if r["call_put"] == "put"]
-                call_total_oi = sum(r["open_interest"] for r in calls)
-                put_total_oi  = sum(r["open_interest"] for r in puts)
-                if call_total_oi:
+                call_total_oi = sum(r["open_interest"] for r in calls) if calls else None
+                put_total_oi = sum(r["open_interest"] for r in puts) if puts else None
+                if call_total_oi and put_total_oi is not None:
                     pc_ratio = round(put_total_oi / call_total_oi * 100, 1)
                 if calls:
                     call_max_strike = max(calls, key=lambda x: x["open_interest"])["strike_price"]
@@ -349,9 +406,9 @@ async def fetch_options_data():
             if existing:
                 db.execute(text("""
                     UPDATE daily_options SET
-                      pc_ratio=:pc, call_max_strike=:cs, put_max_strike=:ps,
-                      call_total_oi=:co, put_total_oi=:po,
-                      foreign_call_net_yi=:fcn, foreign_put_net_yi=:fpn
+                      pc_ratio=COALESCE(:pc, pc_ratio), call_max_strike=COALESCE(:cs, call_max_strike), put_max_strike=COALESCE(:ps, put_max_strike),
+                      call_total_oi=COALESCE(:co, call_total_oi), put_total_oi=COALESCE(:po, put_total_oi),
+                      foreign_call_net_yi=COALESCE(:fcn, foreign_call_net_yi), foreign_put_net_yi=COALESCE(:fpn, foreign_put_net_yi)
                     WHERE date=:d
                 """), {"pc": pc_ratio, "cs": call_max_strike, "ps": put_max_strike,
                        "co": call_total_oi, "po": put_total_oi,
@@ -381,7 +438,7 @@ async def fetch_turnover():
     """抓大盤成交金額（億元） → stock_id='0000' market_volume 欄位"""
     t0 = time.monotonic()
     try:
-        now_str = date.today().strftime("%Y%m%d")
+        now_str = _taipei_today().strftime("%Y%m%d")
         data = await _get_json_with_retry(
             f"{TWSE_BASE}/afterTrading/FMTQIK?date={now_str}&response=json"
         )
@@ -390,9 +447,12 @@ async def fetch_turnover():
 
         trading_date = _parse_twse_date(data)
         # 取最後一筆（最新交易日）
-        last_row = data["data"][-1]
+        valid_rows = list(_valid_rows([data["data"][-1]], (2,)))
+        if not valid_rows:
+            raise ValueError("Invalid turnover")
         # 成交金額欄位（元），轉億
-        volume_yi = round(_parse_num(last_row[2]) / 1e8, 2)
+        volume = _parse_num(valid_rows[0][2])
+        volume_yi = round(volume / 1e8, 2)
 
         with SessionLocal() as db:
             _upsert_chip(db, trading_date, "0000", market_volume=volume_yi)
@@ -435,7 +495,7 @@ async def fetch_exchange_rate():
 
         usd_buy = float(buy_td.get_text(strip=True))
         usd_sell = float(sell_td.get_text(strip=True))
-        today = date.today()
+        today = _taipei_today()
 
         with SessionLocal() as db:
             from sqlalchemy import text as sa_text
