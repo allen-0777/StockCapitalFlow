@@ -44,7 +44,7 @@ JOB_STEPS: dict[str, tuple[str, ...]] = {
     "industry": ("sync_stock_industries", "sync_market_series_daily"),
 }
 
-# 每個 job 對應要檢查的欄位（stock_id='0000'），若已有值代表資料已抓過
+# 每個 job 對應要檢查的 market_daily 欄位，若已有值代表資料已抓過
 JOB_CHECK_COL: dict[str, str] = {
     "institutional": "foreign_buy",
     "futures": "tx_foreign_long",
@@ -85,7 +85,7 @@ def _job_already_done(job: str, expected) -> bool:
         return False
     with SessionLocal() as db:
         row = db.execute(
-            sa_text(f"SELECT {col} FROM daily_chips WHERE date=:d AND stock_id='0000'"),
+            sa_text(f"SELECT {col} FROM market_daily WHERE date=:d"),
             {"d": expected}
         ).fetchone()
         if row is None or row[0] is None:

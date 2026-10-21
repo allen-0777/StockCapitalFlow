@@ -98,8 +98,7 @@ async def send_daily_digest(db: Session) -> None:
             SELECT date, foreign_buy, trust_buy, dealer_buy,
                    margin_long, margin_short,
                    tx_foreign_long, tx_foreign_short
-            FROM daily_chips
-            WHERE stock_id = '0000'
+            FROM market_daily
             ORDER BY date DESC LIMIT 1
         """)
     ).fetchone()

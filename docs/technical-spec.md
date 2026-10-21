@@ -63,15 +63,24 @@ id          INTEGER(PK)  唯一識別碼（autoincrement）
 user_id     INTEGER(FK)  關聯至 users.id
 stock_id    VARCHAR      股票代號（如 '2330'）
 
-Table: daily_chips（每日籌碼歷史紀錄）
+Table: daily_chips（個股每日三大法人買賣超，T86；見 backend/migrations/001_slim_daily_chips.sql）
 欄位           型態          說明
+stock_id       VARCHAR(PK)   股票代號（PK = (stock_id, date)；另有 date 的 BRIN 索引）
 date           DATE(PK)      交易日期
-stock_id       VARCHAR(PK)   股票代號（'0000' 代表大盤）
-foreign_buy    NUMERIC       外資買賣超（億，大盤）/ 千股（個股）
-trust_buy      NUMERIC       投信買賣超
-dealer_buy     NUMERIC       自營商買賣超
-margin_long    INTEGER       融資餘額（交易單位，大盤用）
-margin_short   INTEGER       融券餘額（交易單位，大盤用）
+foreign_buy    INTEGER       外資買賣超（股；API 回傳時 ÷1000 轉張）
+trust_buy      INTEGER       投信買賣超（股）
+dealer_buy     INTEGER       自營商買賣超（股）
+
+Table: market_daily（大盤每日彙總，原 daily_chips 的 stock_id='0000' 列）
+欄位              型態          說明
+date              DATE(PK)      交易日期
+foreign_buy       NUMERIC       外資買賣超（億元）
+trust_buy         NUMERIC       投信買賣超（億元）
+dealer_buy        NUMERIC       自營商買賣超（億元）
+margin_long       INTEGER       融資金額增減（千元）
+margin_short      INTEGER       融券增減（張）
+tx_* / mtx_* / trust_tx_*  INTEGER  期貨三大法人未平倉口數
+market_volume     NUMERIC       大盤成交金額（億元）
 
 5. 後端 API 設計 (RESTful API Endpoints)
 
@@ -82,11 +91,11 @@ margin_short   INTEGER       融券餘額（交易單位，大盤用）
 使用 APScheduler BackgroundScheduler，時區 Asia/Taipei，內嵌於 FastAPI lifespan 啟動：
 
 16:30（法人籌碼更新）：
-  - fetch_institutional_market() → 抓大盤三大法人買賣超，存入 daily_chips（stock_id='0000'）
+  - fetch_institutional_market() → 抓大盤三大法人買賣超，存入 market_daily
   - fetch_institutional_stocks() → 抓所有個股法人買賣超，批次 upsert
 
 17:30（融資券更新）：
-  - fetch_margin() → 抓大盤融資/融券餘額，更新 daily_chips（stock_id='0000'）
+  - fetch_margin() → 抓大盤融資/融券餘額，更新 market_daily
 
 首次啟動時若需要資料，需手動呼叫 fetcher 函式（排程不會立即執行）：
   python3 -c "import asyncio; from app.services.fetcher import fetch_institutional_market, fetch_margin; asyncio.run(fetch_institutional_market()); asyncio.run(fetch_margin())"

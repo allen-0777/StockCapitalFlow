@@ -143,7 +143,7 @@ Response 200:
   "last_margin": "2026-03-16"
 }
 
-- `last_update`：`stock_id='0000'` 列上最新 `date`。
+- `last_update`：`market_daily` 最新 `date`。
 - `last_institutional`：同上列且 `foreign_buy` 非空之最新 `date`。
 - `last_margin`：同上列且 `margin_long` 非空之最新 `date`。  
   若 DB 無資料則各欄位可為 `null`。

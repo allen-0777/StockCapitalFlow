@@ -10,7 +10,7 @@ import aiohttp
 import certifi
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from app.models.database import SessionLocal
+from app.models.database import INT32_MAX, MarketDaily, SessionLocal
 
 TWSE_BASE = "https://www.twse.com.tw/rwd/zh"
 TAIFEX_BASE = "https://openapi.taifex.com.tw/v1"
@@ -100,23 +100,32 @@ def _parse_roc_date(raw) -> date:
         raise ValueError(f"Invalid ROC date: {raw!r}") from None
 
 
+MARKET_STOCK_ID = "0000"
+_MARKET_COLUMNS = {c.name for c in MarketDaily.__table__.columns} - {"date"}
+
+
 def _upsert_chip(db: Session, today: date, stock_id: str, **kwargs):
+    """大盤彙總（歷史上存成 daily_chips 的 stock_id='0000'）→ market_daily。"""
+    if stock_id != MARKET_STOCK_ID:
+        raise ValueError(f"_upsert_chip only handles market rows, got {stock_id!r}")
+    unknown = set(kwargs) - _MARKET_COLUMNS
+    if unknown:
+        raise ValueError(f"Unknown market_daily columns: {sorted(unknown)}")
     existing = db.execute(
-        text("SELECT stock_id FROM daily_chips WHERE date=:d AND stock_id=:s"),
-        {"d": today, "s": stock_id}
+        text("SELECT date FROM market_daily WHERE date=:d"), {"d": today}
     ).fetchone()
     if existing:
         sets = ", ".join(f"{k}=:{k}" for k in kwargs)
         db.execute(
-            text(f"UPDATE daily_chips SET {sets} WHERE date=:date AND stock_id=:stock_id"),
-            {"date": today, "stock_id": stock_id, **kwargs}
+            text(f"UPDATE market_daily SET {sets} WHERE date=:date"),
+            {"date": today, **kwargs}
         )
     else:
-        cols = ", ".join(["date", "stock_id"] + list(kwargs.keys()))
-        vals = ", ".join([":date", ":stock_id"] + [f":{k}" for k in kwargs])
+        cols = ", ".join(["date"] + list(kwargs.keys()))
+        vals = ", ".join([":date"] + [f":{k}" for k in kwargs])
         db.execute(
-            text(f"INSERT INTO daily_chips ({cols}) VALUES ({vals})"),
-            {"date": today, "stock_id": stock_id, **kwargs}
+            text(f"INSERT INTO market_daily ({cols}) VALUES ({vals})"),
+            {"date": today, **kwargs}
         )
 
 
@@ -133,7 +142,7 @@ def _parse_num(s) -> float | None:
 
 
 async def fetch_institutional_market():
-    """抓大盤三大法人買賣超 → stock_id='0000'"""
+    """抓大盤三大法人買賣超 → market_daily"""
     t0 = time.monotonic()
     try:
         data = await _get_json_with_retry(f"{TWSE_BASE}/fund/BFI82U?response=json")
@@ -184,37 +193,49 @@ async def fetch_institutional_stocks():
         rows_data = data.get("data", [])
         stock_params = []
         chip_params = []
+        out_of_range = 0
 
         for row in _valid_rows(rows_data, (4, 10, 11)):
             stock_id = str(row[0]).strip()
             if not stock_id:
                 continue
             try:
-                stock_params.append({"s": stock_id, "n": str(row[1]).strip()})
-                chip_params.append({
-                    "date": trading_date, "stock_id": stock_id,
-                    "foreign_buy": round(_parse_num(row[4]) / 1000, 4),
-                    "trust_buy":   round(_parse_num(row[10]) / 1000, 4),
-                    "dealer_buy":  round(_parse_num(row[11]) / 1000, 4),
-                })
+                # daily_chips 存「股」（integer）；API 讀出時 ÷1000 轉張
+                shares = [int(round(_parse_num(row[i]))) for i in (4, 10, 11)]
             except IndexError:
                 continue
+            if any(abs(v) > INT32_MAX for v in shares):
+                out_of_range += 1
+                _logger.warning("T86 %s shares out of int4 range: %s", stock_id, shares)
+                continue
+            stock_params.append({"s": stock_id, "n": str(row[1]).strip()})
+            chip_params.append({
+                "date": trading_date, "stock_id": stock_id,
+                "foreign_buy": shares[0], "trust_buy": shares[1], "dealer_buy": shares[2],
+            })
+        if out_of_range:
+            print(f"[fetcher][institutional_stocks] WARNING skipped {out_of_range} rows outside int4 range")
 
         with SessionLocal() as db:
             if stock_params:
                 db.execute(
+                    # 名稱沒變就不更新：否則每天把 2 萬列 stocks 全部重寫，產生大量 dead tuple
                     text("INSERT INTO stocks (stock_id, name) VALUES (:s, :n) "
-                         "ON CONFLICT (stock_id) DO UPDATE SET name = EXCLUDED.name"),
+                         "ON CONFLICT (stock_id) DO UPDATE SET name = EXCLUDED.name "
+                         "WHERE stocks.name IS DISTINCT FROM EXCLUDED.name"),
                     stock_params
                 )
             if chip_params:
                 db.execute(
                     text("INSERT INTO daily_chips (date, stock_id, foreign_buy, trust_buy, dealer_buy) "
                          "VALUES (:date, :stock_id, :foreign_buy, :trust_buy, :dealer_buy) "
-                         "ON CONFLICT (date, stock_id) DO UPDATE SET "
+                         "ON CONFLICT (stock_id, date) DO UPDATE SET "
                          "foreign_buy = EXCLUDED.foreign_buy, "
                          "trust_buy   = EXCLUDED.trust_buy, "
-                         "dealer_buy  = EXCLUDED.dealer_buy"),
+                         "dealer_buy  = EXCLUDED.dealer_buy "
+                         # 重跑同一天且數值相同時不重寫列（避免 heap / index 膨脹）
+                         "WHERE (daily_chips.foreign_buy, daily_chips.trust_buy, daily_chips.dealer_buy) "
+                         "IS DISTINCT FROM (EXCLUDED.foreign_buy, EXCLUDED.trust_buy, EXCLUDED.dealer_buy)"),
                     chip_params
                 )
             db.commit()
@@ -229,7 +250,7 @@ async def fetch_institutional_stocks():
 
 
 async def fetch_margin():
-    """抓大盤融資融券餘額 → stock_id='0000'"""
+    """抓大盤融資融券餘額 → market_daily"""
     t0 = time.monotonic()
     try:
         data = await _get_json_with_retry(f"{TWSE_BASE}/marginTrading/MI_MARGN?response=json&selectType=MS")
@@ -445,7 +466,7 @@ async def fetch_options_data():
 
 
 async def fetch_turnover():
-    """抓大盤成交金額（億元） → stock_id='0000' market_volume 欄位"""
+    """抓大盤成交金額（億元） → market_daily.market_volume"""
     t0 = time.monotonic()
     try:
         now_str = _taipei_today().strftime("%Y%m%d")

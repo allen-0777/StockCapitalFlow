@@ -45,22 +45,21 @@ def market_summary(db: Session = Depends(get_db)):
         text("""
             WITH inst AS (
                 SELECT date, foreign_buy, trust_buy, dealer_buy, market_volume
-                FROM daily_chips
-                WHERE stock_id = '0000' AND foreign_buy IS NOT NULL
+                FROM market_daily
+                WHERE foreign_buy IS NOT NULL
                 ORDER BY date DESC LIMIT 1
             ),
             margin_preferred AS (
                 SELECT c.date, c.margin_long, c.margin_short
-                FROM daily_chips c, inst i
-                WHERE c.stock_id = '0000'
-                  AND c.margin_long IS NOT NULL
+                FROM market_daily c, inst i
+                WHERE c.margin_long IS NOT NULL
                   AND c.date = i.date
                 LIMIT 1
             ),
             margin_latest AS (
                 SELECT date, margin_long, margin_short
-                FROM daily_chips
-                WHERE stock_id = '0000' AND margin_long IS NOT NULL
+                FROM market_daily
+                WHERE margin_long IS NOT NULL
                 ORDER BY date DESC LIMIT 1
             )
             SELECT
@@ -106,9 +105,8 @@ def market_summary(db: Session = Depends(get_db)):
             SELECT date, tx_foreign_long, tx_foreign_short,
                    mtx_retail_long, mtx_retail_short,
                    trust_tx_long, trust_tx_short
-            FROM daily_chips
-            WHERE stock_id = '0000'
-              AND tx_foreign_long IS NOT NULL
+            FROM market_daily
+            WHERE tx_foreign_long IS NOT NULL
               AND (tx_foreign_long > 0 OR tx_foreign_short > 0)
             ORDER BY date DESC
             LIMIT 5
@@ -158,8 +156,8 @@ def market_summary(db: Session = Depends(get_db)):
     # 近 20 日成交量歷史（用於 bar chart）
     vol_rows = db.execute(
         text("""
-            SELECT date, market_volume FROM daily_chips
-            WHERE stock_id = '0000' AND market_volume IS NOT NULL
+            SELECT date, market_volume FROM market_daily
+            WHERE market_volume IS NOT NULL
             ORDER BY date DESC LIMIT 20
         """)
     ).fetchall()

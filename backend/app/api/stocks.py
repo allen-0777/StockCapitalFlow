@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from app.models.database import get_db
+from app.models.database import get_db, shares_to_lots
 from app.services.finmind_client import get_shared_session
 
 router = APIRouter()
@@ -40,7 +40,7 @@ async def search_stocks(q: str = Query(..., min_length=1)):
 def stock_chips(stock_id: str, days: int = Query(default=5, ge=1, le=60), db: Session = Depends(get_db)):
     rows = db.execute(
         text("""
-            SELECT date, foreign_buy, trust_buy, dealer_buy, margin_long, margin_short
+            SELECT date, foreign_buy, trust_buy, dealer_buy
             FROM daily_chips
             WHERE stock_id = :stock_id
             ORDER BY date DESC
@@ -52,11 +52,12 @@ def stock_chips(stock_id: str, days: int = Query(default=5, ge=1, le=60), db: Se
     return [
         {
             "date": str(r.date),
-            "foreign_buy": float(r.foreign_buy or 0),
-            "trust_buy": float(r.trust_buy or 0),
-            "dealer_buy": float(r.dealer_buy or 0),
-            "margin_long": r.margin_long or 0,
-            "margin_short": r.margin_short or 0,
+            "foreign_buy": shares_to_lots(r.foreign_buy) or 0.0,
+            "trust_buy": shares_to_lots(r.trust_buy) or 0.0,
+            "dealer_buy": shares_to_lots(r.dealer_buy) or 0.0,
+            # 個股融資券從未寫入（僅大盤有），保留欄位維持 API 相容
+            "margin_long": 0,
+            "margin_short": 0,
         }
         for r in rows
     ]

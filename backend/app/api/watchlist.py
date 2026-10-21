@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
-from app.models.database import get_db
+from app.models.database import get_db, shares_to_lots
 from app.api.deps import require_api_key
 
 router = APIRouter()
@@ -40,9 +40,9 @@ def get_watchlist(user_id: int, db: Session = Depends(get_db)):
         {
             "stock_id": r.stock_id,
             "name": r.name,
-            "foreign_buy": float(r.foreign_buy or 0) if r.foreign_buy is not None else 0,
-            "trust_buy":   float(r.trust_buy   or 0) if r.trust_buy   is not None else 0,
-            "dealer_buy":  float(r.dealer_buy  or 0) if r.dealer_buy  is not None else 0,
+            "foreign_buy": shares_to_lots(r.foreign_buy) if r.foreign_buy is not None else 0,
+            "trust_buy":   shares_to_lots(r.trust_buy) if r.trust_buy is not None else 0,
+            "dealer_buy":  shares_to_lots(r.dealer_buy) if r.dealer_buy is not None else 0,
             "date": str(r.date) if r.date else None,
         }
         for r in rows

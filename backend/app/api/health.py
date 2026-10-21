@@ -8,15 +8,14 @@ router = APIRouter()
 
 @router.get("/api/v1/health")
 def health(db: Session = Depends(get_db)):
-    # 僅看大盤彙總列；單次查詢（MAX + CASE）相容 SQLite / PostgreSQL
+    # 大盤彙總表；單次查詢（MAX + CASE）相容 SQLite / PostgreSQL
     row = db.execute(
         text("""
             SELECT
                 MAX(date) AS last_any,
                 MAX(CASE WHEN foreign_buy IS NOT NULL THEN date END) AS last_inst,
                 MAX(CASE WHEN margin_long IS NOT NULL THEN date END) AS last_margin
-            FROM daily_chips
-            WHERE stock_id = '0000'
+            FROM market_daily
         """)
     ).one()
     last_any, last_inst, last_margin = row[0], row[1], row[2]
