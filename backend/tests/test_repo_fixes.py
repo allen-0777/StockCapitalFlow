@@ -343,3 +343,63 @@ def test_normalize_db_url_uses_installed_psycopg2_driver():
     assert normalize_db_url("postgresql://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
     assert normalize_db_url("postgresql+psycopg2://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
     assert normalize_db_url("sqlite:///x.db") == "sqlite:///x.db"
+
+
+FUT_CSV = ("日期,商品名稱,身份別,多方交易口數,多方交易契約金額(千元),空方交易口數,空方交易契約金額(千元),多空交易口數淨額,多空交易契約金額淨額(千元),多方未平倉口數,多方未平倉契約金額(千元),空方未平倉口數,空方未平倉契約金額(千元),多空未平倉口數淨額,多空未平倉契約金額淨額(千元)\n"
+           "2026/10/19,臺股期貨,外資及陸資,1,1,1,1,0,0,10000,1,90000,1,-80000,-1\n"
+           "2026/10/20,臺股期貨,外資及陸資,95138,886918805,93688,874333384,1450,12585421,11524,107044417,101272,941740491,-89748,-834696074\n").encode("cp950")
+
+
+def test_parse_taifex_csv_maps_openapi_keys():
+    _, _, cols = fetcher.TAIFEX_WEB_SOURCES["/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"]
+    rows = fetcher._parse_taifex_csv(FUT_CSV, cols)
+    assert rows[1] == {"Date": "20261020", "ContractCode": "臺股期貨", "Item": "外資及陸資",
+                       "OpenInterest(Long)": "11524", "OpenInterest(Short)": "101272"}
+    assert fetcher._parse_taifex_csv(b"<!DOCTYPE HTML>", cols) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("web_date,api_date,expected", [
+    ("20261021", "20261020", "20261021"),   # 17:30：官網已有今日、OpenAPI 仍是昨日
+    (None, "20261020", "20261020"),         # 官網查無 / 失敗 → OpenAPI
+    ("20261020", "20261020", "20261020"),
+])
+async def test_taifex_prefers_newer_web_csv(web_date, api_date, expected):
+    path = "/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
+    web = [] if web_date is None else [{"Date": "20261019"}, {"Date": web_date}]
+    with patch.object(fetcher, "_get_taifex_web_latest", AsyncMock(return_value=web)), \
+         patch.object(fetcher, "_get_taifex_openapi", AsyncMock(return_value=[{"Date": api_date}])), \
+         patch.object(fetcher, "_taipei_today", return_value=date(2026, 10, 21)):
+        rows = await fetcher._get_taifex_json(path)
+    assert {r["Date"] for r in rows} == {expected}
+
+
+@pytest.mark.asyncio
+async def test_taifex_web_error_falls_back_to_openapi():
+    path = "/MarketDataOfMajorInstitutionalTradersDetailsOfCallsAndPutsBytheDate"
+    with patch.object(fetcher, "_get_taifex_web_latest", AsyncMock(side_effect=RuntimeError("blocked"))), \
+         patch.object(fetcher, "_get_taifex_openapi", AsyncMock(return_value=[{"Date": "20261020"}])):
+        assert await fetcher._get_taifex_json(path) == [{"Date": "20261020"}]
+
+
+@pytest.mark.asyncio
+async def test_options_queries_finmind_for_taifex_date():
+    taifex = [{'Date': '20261020', 'ContractCode': '臺指選擇權', 'Item': '外資及陸資', 'CallPut': 'CALL', 'ContractValueofOpenInterest(Long)(Thousands)': '300000', 'ContractValueofOpenInterest(Short)(Thousands)': '100000'}]
+    getter = AsyncMock(return_value=[])
+    with patch.object(fetcher, '_get_taifex_json', AsyncMock(return_value=taifex)), patch.object(fetcher, '_taipei_today', return_value=date(2026, 10, 21)), patch.object(fetcher, 'SessionLocal'), patch.object(fm, 'get_shared_session', AsyncMock()), patch.object(fm, 'finmind_get', getter):
+        await fetcher.fetch_options_data()
+    assert getter.call_args.args[3] == '2026-10-20'
+
+
+@pytest.mark.asyncio
+async def test_taifex_web_latest_walks_back_past_unpublished_and_weekend():
+    path = "/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
+    seen = []
+    async def fake(p, day):
+        seen.append(day)
+        return [{"Date": day.strftime("%Y%m%d")}] if day == date(2026, 10, 16) else []
+    with patch.object(fetcher, "_get_taifex_web", side_effect=fake), \
+         patch.object(fetcher, "_taipei_today", return_value=date(2026, 10, 19)):
+        rows = await fetcher._get_taifex_web_latest(path)
+    assert rows == [{"Date": "20261016"}]
+    assert seen == [date(2026, 10, 19), date(2026, 10, 16)]  # 跳過週六日

@@ -15,9 +15,6 @@ from app.models.database import SessionLocal
 TWSE_BASE = "https://www.twse.com.tw/rwd/zh"
 TAIFEX_BASE = "https://openapi.taifex.com.tw/v1"
 
-# FinMind TaiwanOptionDaily（各履約價 OI）仍可能延遲數日，保留回溯天數設定
-FINMIND_LOOKBACK_DAYS = 14
-
 # Python 3.14 的嚴格檢查拒絕 TWSE 缺 Subject Key Identifier 的憑證。
 # 僅關閉 VERIFY_X509_STRICT，保留 CA 驗證與主機名稱檢查。
 _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
@@ -56,14 +53,108 @@ async def _get_json(url: str) -> dict:
             return await resp.json(content_type=None)
 
 
-async def _get_taifex_json(path: str) -> list:
-    """打期交所 OpenAPI v1，回傳 list[dict]（當日盤後即有，無需 token）"""
+async def _get_taifex_openapi(path: str) -> list:
+    """打期交所 OpenAPI v1，回傳 list[dict]。
+    注意：實測 OpenAPI 於「次一日清晨約 06:30」才更新（Last-Modified），
+    17:30 排程時常仍是前一交易日資料，因此僅作為官網 CSV 的備援。
+    """
     headers = {"User-Agent": "Mozilla/5.0 (compatible; LiquidChip/1.0)"}
     url = f"{TAIFEX_BASE}{path}"
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
             resp.raise_for_status()
             return await resp.json(content_type=None)
+
+
+# 官網「三大法人」CSV 下載（約 15:00 後公布當日資料，且支援日期區間查詢，可用於補歷史）
+# 欄位依序對應到 OpenAPI 的 key，讓下游解析邏輯不必改。
+TAIFEX_WEB_BASE = "https://www.taifex.com.tw/cht/3"
+TAIFEX_WEB_SOURCES = {
+    "/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate": (
+        "futContractsDateDown", {"commodityId": ""},
+        {0: "Date", 1: "ContractCode", 2: "Item",
+         9: "OpenInterest(Long)", 11: "OpenInterest(Short)"},
+    ),
+    "/MarketDataOfMajorInstitutionalTradersDetailsOfCallsAndPutsBytheDate": (
+        "callsAndPutsDateDown", {"commodityId": "TXO"},
+        {0: "Date", 1: "ContractCode", 2: "CallPut", 3: "Item",
+         11: "ContractValueofOpenInterest(Long)(Thousands)",
+         13: "ContractValueofOpenInterest(Short)(Thousands)"},
+    ),
+}
+TAIFEX_WEB_LOOKBACK_DAYS = 10
+
+
+def _parse_taifex_csv(raw: bytes, columns: dict) -> list:
+    """解析官網 CSV（MS950 編碼）。查無資料時官網回 HTML，視為空結果。"""
+    body = raw.decode("cp950", errors="replace")
+    if body.lstrip().startswith("<"):
+        return []
+    rows = []
+    for line in body.splitlines()[1:]:
+        cells = [c.strip() for c in line.split(",")]
+        if len(cells) <= max(columns):
+            continue
+        row = {key: cells[i] for i, key in columns.items()}
+        row["Date"] = row["Date"].replace("/", "")
+        rows.append(row)
+    return rows
+
+
+async def _get_taifex_web(path: str, day: date) -> list:
+    """查官網單日 CSV。注意：查詢區間只要包含尚未公布的日期，官網就整批回 HTML（查無資料），
+    所以只能逐日查。"""
+    page, extra, columns = TAIFEX_WEB_SOURCES[path]
+    form = {"queryStartDate": day.strftime("%Y/%m/%d"),
+            "queryEndDate": day.strftime("%Y/%m/%d"), **extra}
+    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                             "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f"{TAIFEX_WEB_BASE}/{page}", data=form, headers=headers,
+                                timeout=aiohttp.ClientTimeout(total=30), ssl=_ssl_ctx) as resp:
+            resp.raise_for_status()
+            return _parse_taifex_csv(await resp.read(), columns)
+
+
+async def _get_taifex_web_latest(path: str) -> list:
+    """由今天往回逐日查官網 CSV，回傳最新一個有資料的交易日。"""
+    from datetime import timedelta
+
+    today = _taipei_today()
+    for back in range(TAIFEX_WEB_LOOKBACK_DAYS):
+        day = today - timedelta(days=back)
+        if day.weekday() >= 5:
+            continue
+        rows = await _get_taifex_web(path, day)
+        if rows:
+            return rows
+    return []
+
+
+async def _get_taifex_json(path: str) -> list:
+    """回傳期交所「最新交易日」的資料（OpenAPI 格式的 list[dict]，只含單一日期）。
+    先打官網 CSV（當日約 15:00 後即有），失敗或較舊時改用 OpenAPI，取兩者較新的日期。
+    """
+    web_rows: list = []
+    if path in TAIFEX_WEB_SOURCES:
+        try:
+            web_rows = await _get_taifex_web_latest(path)
+        except Exception as e:  # 官網偶有擋爬或維護，退回 OpenAPI
+            _logger.warning("TAIFEX web CSV failed for %s: %s", path, e)
+    api_rows: list = []
+    try:
+        api_rows = await _get_taifex_openapi(path)
+    except Exception as e:
+        if not web_rows:
+            raise
+        _logger.warning("TAIFEX OpenAPI failed for %s: %s", path, e)
+
+    web_latest = max((r["Date"] for r in web_rows), default="")
+    api_latest = api_rows[0]["Date"] if api_rows else ""
+    if web_latest and web_latest >= api_latest:
+        print(f"[fetcher][taifex] web CSV {web_latest} (OpenAPI={api_latest or 'n/a'})")
+        return [r for r in web_rows if r["Date"] == web_latest]
+    return api_rows
 
 
 async def _get_json_with_retry(url: str, max_retries: int = 3) -> dict:
@@ -370,21 +461,21 @@ async def fetch_options_data():
         call_total_oi = put_total_oi = None
         finmind_date = ""
 
+        # 直接查 TAIFEX 的交易日：過去從「今天」往回找，盤中 FinMind 已有今日
+        # （夜盤歸屬次一交易日）資料，會選到今天而與 TAIFEX 日期不符，P/C 永遠被略過。
         session = await get_shared_session()
-        for days_back in range(0, FINMIND_LOOKBACK_DAYS):
-            d = (_taipei_today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-            body_rows = await finmind_get(
-                session,
-                "TaiwanOptionDaily",
-                "TXO",
-                d,
-                timeout=30.0,
-                token_in_query=True,
-            )
-            all_rows = [row for row in body_rows if row.get("date") == d]
-            if all_rows:
-                finmind_date = d
-                break
+        d = db_date.isoformat()
+        body_rows = await finmind_get(
+            session,
+            "TaiwanOptionDaily",
+            "TXO",
+            d,
+            timeout=30.0,
+            token_in_query=True,
+        )
+        all_rows = [row for row in body_rows if row.get("date") == d]
+        if any(row.get("trading_session") == "position" for row in all_rows):
+            finmind_date = d
 
         if finmind_date and finmind_date != db_date.isoformat():
             _logger.warning("Skipping FinMind options date %s for TAIFEX %s", finmind_date, db_date)
