@@ -23,11 +23,20 @@ on:
         description: '非交易日也執行（補資料用）'
         default: false
         type: boolean
+      backfill_start:
+        # 填入時改跑區間補資料（TWSE 籌碼 + market_series_daily），忽略 jobs/force
+        description: '補資料起日 YYYY-MM-DD（留空＝一般每日抓取）'
+        default: ''
+        type: string
+      backfill_end:
+        description: '補資料迄日 YYYY-MM-DD（留空＝今日）'
+        default: ''
+        type: string
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 180  # 區間補資料：每個交易日 T86 寫入約 30s，建議每次 1～2 個月
     steps:
       - uses: actions/checkout@v4
 
@@ -42,11 +51,20 @@ jobs:
       # FETCH_JOBS / FETCH_FORCE 透過 env 傳入，避免將 workflow input 直接拼入 run 指令（安全規範）
       - name: Run fetch
         env:
+          PYTHONUNBUFFERED: '1'   # 被 timeout 取消時仍保留已輸出的 log
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           FETCH_JOBS: ${{ inputs.jobs || 'all' }}
           FETCH_FORCE: ${{ inputs.force || 'false' }}
+          BACKFILL_START: ${{ inputs.backfill_start || '' }}
+          BACKFILL_END: ${{ inputs.backfill_end || '' }}
         run: |
+          if [ -n "$BACKFILL_START" ]; then
+            ARGS=(--start "$BACKFILL_START")
+            [ -n "$BACKFILL_END" ] && ARGS+=(--end "$BACKFILL_END")
+            python backend/scripts/fetch_daily.py "${ARGS[@]}"
+            exit $?
+          fi
           FORCE_FLAG=""
           [ "$FETCH_FORCE" = "true" ] && FORCE_FLAG="--force"
           python backend/scripts/fetch_daily.py --jobs "$FETCH_JOBS" $FORCE_FLAG
