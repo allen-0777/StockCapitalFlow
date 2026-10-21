@@ -23,11 +23,20 @@ on:
         description: '非交易日也執行（補資料用）'
         default: false
         type: boolean
+      backfill_start:
+        # 填入時改跑區間補資料（TWSE 籌碼 + market_series_daily），忽略 jobs/force
+        description: '補資料起日 YYYY-MM-DD（留空＝一般每日抓取）'
+        default: ''
+        type: string
+      backfill_end:
+        description: '補資料迄日 YYYY-MM-DD（留空＝今日）'
+        default: ''
+        type: string
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60  # 區間補資料約 30 分鐘
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +55,15 @@ jobs:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           FETCH_JOBS: ${{ inputs.jobs || 'all' }}
           FETCH_FORCE: ${{ inputs.force || 'false' }}
+          BACKFILL_START: ${{ inputs.backfill_start || '' }}
+          BACKFILL_END: ${{ inputs.backfill_end || '' }}
         run: |
+          if [ -n "$BACKFILL_START" ]; then
+            ARGS=(--start "$BACKFILL_START")
+            [ -n "$BACKFILL_END" ] && ARGS+=(--end "$BACKFILL_END")
+            python backend/scripts/fetch_daily.py "${ARGS[@]}"
+            exit $?
+          fi
           FORCE_FLAG=""
           [ "$FETCH_FORCE" = "true" ] && FORCE_FLAG="--force"
           python backend/scripts/fetch_daily.py --jobs "$FETCH_JOBS" $FORCE_FLAG

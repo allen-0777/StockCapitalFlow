@@ -122,11 +122,18 @@ def _parse_num(s) -> float | None:
         return None
 
 
-async def fetch_institutional_market():
+def _twse_date_param(target: date | None, key: str = "date") -> str:
+    """補資料用：指定交易日時附加 TWSE 查詢參數（未指定則抓最新）。"""
+    return f"&{key}={target.strftime('%Y%m%d')}" if target else ""
+
+
+async def fetch_institutional_market(target: date | None = None):
     """抓大盤三大法人買賣超 → stock_id='0000'"""
     t0 = time.monotonic()
     try:
-        data = await _get_json_with_retry(f"{TWSE_BASE}/fund/BFI82U?response=json")
+        data = await _get_json_with_retry(
+            f"{TWSE_BASE}/fund/BFI82U?response=json&type=day{_twse_date_param(target, 'dayDate')}"
+        )
         trading_date = _parse_twse_date(data)
 
         if data.get("stat") != "OK":
@@ -161,11 +168,13 @@ async def fetch_institutional_market():
         raise
 
 
-async def fetch_institutional_stocks():
+async def fetch_institutional_stocks(target: date | None = None):
     """抓個股三大法人買賣超（bulk upsert，避免逐筆 SQL）"""
     t0 = time.monotonic()
     try:
-        data = await _get_json_with_retry(f"{TWSE_BASE}/fund/T86?response=json&selectType=ALL")
+        data = await _get_json_with_retry(
+            f"{TWSE_BASE}/fund/T86?response=json&selectType=ALL{_twse_date_param(target)}"
+        )
         trading_date = _parse_twse_date(data)
 
         if data.get("stat") != "OK":
@@ -218,11 +227,13 @@ async def fetch_institutional_stocks():
         raise
 
 
-async def fetch_margin():
+async def fetch_margin(target: date | None = None):
     """抓大盤融資融券餘額 → stock_id='0000'"""
     t0 = time.monotonic()
     try:
-        data = await _get_json_with_retry(f"{TWSE_BASE}/marginTrading/MI_MARGN?response=json&selectType=MS")
+        data = await _get_json_with_retry(
+            f"{TWSE_BASE}/marginTrading/MI_MARGN?response=json&selectType=MS{_twse_date_param(target)}"
+        )
         trading_date = _parse_twse_date(data)
 
         if data.get("stat") != "OK":
@@ -434,11 +445,12 @@ async def fetch_options_data():
         raise
 
 
-async def fetch_turnover():
-    """抓大盤成交金額（億元） → stock_id='0000' market_volume 欄位"""
+async def fetch_turnover(target: date | None = None):
+    """抓大盤成交金額（億元） → stock_id='0000' market_volume 欄位
+    target 指定時從月報（FMTQIK 一次回整月）挑出該日那一列。"""
     t0 = time.monotonic()
     try:
-        now_str = _taipei_today().strftime("%Y%m%d")
+        now_str = (target or _taipei_today()).strftime("%Y%m%d")
         data = await _get_json_with_retry(
             f"{TWSE_BASE}/afterTrading/FMTQIK?date={now_str}&response=json"
         )
@@ -446,8 +458,15 @@ async def fetch_turnover():
             raise RuntimeError(f"TWSE FMTQIK stat={data.get('stat')}")
 
         trading_date = _parse_twse_date(data)
-        # 取最後一筆（最新交易日）
-        valid_rows = list(_valid_rows([data["data"][-1]], (2,)))
+        # 預設取最後一筆（最新交易日）；補資料時取 target 當日（日期欄為民國年 115/04/01）
+        row = data["data"][-1]
+        if target:
+            roc = f"{target.year - 1911}/{target:%m/%d}"
+            matches = [r for r in data["data"] if r and str(r[0]).strip() == roc]
+            if not matches:
+                raise ValueError(f"FMTQIK has no row for {target}")
+            row, trading_date = matches[0], target
+        valid_rows = list(_valid_rows([row], (2,)))
         if not valid_rows:
             raise ValueError("Invalid turnover")
         # 成交金額欄位（元），轉億
@@ -530,7 +549,7 @@ async def sync_stock_industries():
     return await _sync()
 
 
-async def sync_market_series_daily():
+async def sync_market_series_daily(days: int = 0):
     from app.services.industry_sync import sync_market_series_daily as _sync
 
-    return await _sync()
+    return await _sync(days)
