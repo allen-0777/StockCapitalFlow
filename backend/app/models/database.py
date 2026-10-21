@@ -1,4 +1,5 @@
-from sqlalchemy import create_engine, Column, String, Date, Numeric, Integer, ForeignKey, text
+from sqlalchemy import (create_engine, Column, String, Date, Numeric, Integer, ForeignKey,
+                        PrimaryKeyConstraint, inspect, text)
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from datetime import datetime
 import json
@@ -130,21 +131,78 @@ class Stock(Base):
 
 
 class DailyChip(Base):
+    """個股每日三大法人買賣超（T86）。單位：股（API 回傳時 ÷1000 轉成張）。
+    欄位順序刻意讓定長整數在前、varchar 在後，避免 alignment padding（每列 heap 約 52 bytes）。
+    PK 為 (stock_id, date) 供個股歷史查詢；依日期的查詢走 BRIN(date)。
+    """
     __tablename__ = "daily_chips"
+    __table_args__ = (PrimaryKeyConstraint("stock_id", "date", name="daily_chips_pkey"),)
+    date = Column(Date, nullable=False)
+    foreign_buy = Column(Integer, nullable=False)   # 外資買賣超（股）
+    trust_buy = Column(Integer, nullable=False)     # 投信買賣超（股）
+    dealer_buy = Column(Integer, nullable=False)    # 自營商買賣超（股）
+    stock_id = Column(String, nullable=False)
+
+
+class MarketDaily(Base):
+    """大盤每日彙總（原 daily_chips 的 stock_id='0000' 列）"""
+    __tablename__ = "market_daily"
     date = Column(Date, primary_key=True)
-    stock_id = Column(String, primary_key=True)
-    foreign_buy = Column(Numeric, nullable=True)
-    trust_buy = Column(Numeric, nullable=True)
-    dealer_buy = Column(Numeric, nullable=True)
-    margin_long = Column(Integer, nullable=True)
-    margin_short = Column(Integer, nullable=True)
+    foreign_buy = Column(Numeric, nullable=True)       # 外資買賣超（億元）
+    trust_buy = Column(Numeric, nullable=True)         # 投信買賣超（億元）
+    dealer_buy = Column(Numeric, nullable=True)        # 自營商買賣超（億元）
+    margin_long = Column(Integer, nullable=True)       # 融資金額增減（千元）
+    margin_short = Column(Integer, nullable=True)      # 融券增減（張）
     tx_foreign_long = Column(Integer, nullable=True)   # 台指期外資多方未平倉口數
     tx_foreign_short = Column(Integer, nullable=True)  # 台指期外資空方未平倉口數
     mtx_retail_long = Column(Integer, nullable=True)   # 小台外資多方未平倉口數
     mtx_retail_short = Column(Integer, nullable=True)  # 小台外資空方未平倉口數
     trust_tx_long = Column(Integer, nullable=True)     # 台指期投信多方未平倉口數
     trust_tx_short = Column(Integer, nullable=True)    # 台指期投信空方未平倉口數
+    mtx_trust_long = Column(Integer, nullable=True)    # 舊欄位（保留歷史資料）
+    mtx_trust_short = Column(Integer, nullable=True)
+    mtx_dealer_long = Column(Integer, nullable=True)
+    mtx_dealer_short = Column(Integer, nullable=True)
     market_volume = Column(Numeric, nullable=True)     # 大盤成交金額（億元）
+
+
+INT32_MAX = 2**31 - 1
+
+
+def shares_to_lots(value):
+    """daily_chips 存股數；API 一律回傳張（與遷移前 numeric 欄位相同的數值）。"""
+    return None if value is None else float(value) / 1000
+
+
+def latest_chip_date(db: Session):
+    """daily_chips 最新日期。只有 BRIN(date) 索引，全表 MAX 會掃全表；
+    先限定近 30 天（BRIN 可跳過舊區塊），沒有才退回全表。"""
+    from datetime import date as _date, timedelta
+
+    cutoff = _date.today() - timedelta(days=30)
+    recent = db.execute(
+        text("SELECT MAX(date) FROM daily_chips WHERE date >= :cutoff"), {"cutoff": cutoff}
+    ).scalar()
+    if recent is not None:
+        return recent
+    return db.execute(text("SELECT MAX(date) FROM daily_chips")).scalar()
+
+
+class SchemaNotMigratedError(RuntimeError):
+    pass
+
+
+def assert_schema_current(bind=None) -> None:
+    """新程式碼以「股」寫入整數欄位；若 DB 還是舊 schema（daily_chips 仍有大盤欄位），
+    直接拒絕啟動，避免把股數寫進以「張」為單位的舊表。"""
+    insp = inspect(bind or engine)
+    if not insp.has_table("daily_chips"):
+        return
+    cols = {c["name"] for c in insp.get_columns("daily_chips")}
+    if "margin_long" in cols:
+        raise SchemaNotMigratedError(
+            "daily_chips 仍是舊 schema；請先執行 backend/migrations/001_slim_daily_chips.sql"
+        )
 
 
 class DailyExchangeRate(Base):
@@ -205,26 +263,24 @@ class MarketSeriesDaily(Base):
 
 
 def init_db():
+    assert_schema_current()
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         existing = db.execute(text("SELECT COUNT(*) FROM users")).scalar()
         if existing == 0:
             db.execute(text("INSERT INTO users (id, username) VALUES (1, 'default')"))
             db.commit()
-        # 向舊資料庫補欄位（ALTER TABLE 對已存在欄位會拋例外，直接忽略）
-        for col in ["tx_foreign_long INTEGER", "tx_foreign_short INTEGER",
-                    "mtx_retail_long INTEGER", "mtx_retail_short INTEGER",
-                    "trust_tx_long INTEGER", "trust_tx_short INTEGER",
-                    "market_volume NUMERIC"]:
-            try:
-                db.execute(text(f"ALTER TABLE daily_chips ADD COLUMN {col}"))
-                db.commit()
-            except Exception:
-                db.rollback()  # PostgreSQL: 失敗後必須 rollback 才能繼續
         # 補 Index（IF NOT EXISTS 避免重複）
-        db.execute(text(
-            "CREATE INDEX IF NOT EXISTS idx_chips_stock_date ON daily_chips(stock_id, date DESC)"
-        ))
+        # daily_chips 依日期查詢改用 BRIN（遷移後已移除 idx_chips_stock_date，勿再建）
+        if engine.dialect.name == "postgresql":
+            db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_chips_date_brin ON daily_chips "
+                "USING brin (date) WITH (pages_per_range = 32)"
+            ))
+        else:
+            db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_chips_date ON daily_chips(date)"
+            ))
         db.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_watchlists_user ON watchlists(user_id)"
         ))
@@ -234,6 +290,7 @@ def init_db():
         db.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_options_date ON daily_options(date DESC)"
         ))
+        db.commit()
         try:
             db.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_market_series_sid_date "

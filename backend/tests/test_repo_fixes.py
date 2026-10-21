@@ -70,7 +70,7 @@ async def test_bad_stock_row_skipped(caplog):
     with patch.object(fetcher, '_get_json_with_retry', AsyncMock(return_value={'stat': 'OK', 'date': '20261020', 'data': [bad, [], good]})), patch.object(fetcher, 'SessionLocal') as local:
         local.return_value.__enter__.return_value = db
         assert await fetcher.fetch_institutional_stocks() == date(2026, 10, 20)
-    assert db.execute.call_args_list[1].args[1][0]['foreign_buy'] == 1
+    assert db.execute.call_args_list[1].args[1][0]['foreign_buy'] == 1000  # 股（schema 001 起存股數）
     assert len(db.execute.call_args_list[1].args[1]) == 1
     assert 'Rejected 2' in caplog.text
 

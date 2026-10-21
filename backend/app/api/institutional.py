@@ -3,7 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from app.models.database import get_db, cache_get, cache_set
+from app.models.database import get_db, cache_get, cache_set, latest_chip_date, shares_to_lots
 
 router = APIRouter()
 
@@ -30,9 +30,7 @@ def institutional_ranking(
     direction = "DESC" if order == "buy" else "ASC"
 
     # Pre-fetch max_date to avoid correlated subquery full-table scan
-    max_date = db.execute(
-        text("SELECT MAX(date) FROM daily_chips WHERE stock_id != '0000' AND foreign_buy IS NOT NULL")
-    ).scalar()
+    max_date = latest_chip_date(db)
 
     if not max_date:
         return []
@@ -44,8 +42,7 @@ def institutional_ranking(
                    (c.foreign_buy + c.trust_buy + c.dealer_buy) AS total
             FROM daily_chips c
             LEFT JOIN stocks s ON c.stock_id = s.stock_id
-            WHERE c.stock_id != '0000'
-              AND c.date = :max_date
+            WHERE c.date = :max_date
               AND {col} IS NOT NULL
             ORDER BY {col} {direction}
             LIMIT :limit
@@ -57,10 +54,10 @@ def institutional_ranking(
         {
             "stock_id": r.stock_id,
             "name": r.name,
-            "foreign_buy": round(float(r.foreign_buy or 0), 2),
-            "trust_buy": round(float(r.trust_buy or 0), 2),
-            "dealer_buy": round(float(r.dealer_buy or 0), 2),
-            "total": round(float(r.total or 0), 2),
+            "foreign_buy": round(shares_to_lots(r.foreign_buy) or 0.0, 2),
+            "trust_buy": round(shares_to_lots(r.trust_buy) or 0.0, 2),
+            "dealer_buy": round(shares_to_lots(r.dealer_buy) or 0.0, 2),
+            "total": round(shares_to_lots(r.total) or 0.0, 2),
         }
         for r in rows
     ]
@@ -79,9 +76,7 @@ def common_buy(
     if cached is not None:
         return cached
 
-    max_date = db.execute(
-        text("SELECT MAX(date) FROM daily_chips WHERE stock_id != '0000' AND foreign_buy IS NOT NULL")
-    ).scalar()
+    max_date = latest_chip_date(db)
     if not max_date:
         return {"date": None, "stocks": []}
 
@@ -92,8 +87,7 @@ def common_buy(
                    (c.foreign_buy + c.trust_buy + c.dealer_buy) AS total
             FROM daily_chips c
             LEFT JOIN stocks s ON c.stock_id = s.stock_id
-            WHERE c.stock_id != '0000'
-              AND c.date = :max_date
+            WHERE c.date = :max_date
               AND c.foreign_buy > 0
               AND c.trust_buy > 0
             ORDER BY (c.foreign_buy + c.trust_buy) DESC
@@ -108,10 +102,10 @@ def common_buy(
             {
                 "stock_id": r.stock_id,
                 "name": r.name,
-                "foreign_buy": round(float(r.foreign_buy or 0), 2),
-                "trust_buy": round(float(r.trust_buy or 0), 2),
-                "dealer_buy": round(float(r.dealer_buy or 0), 2),
-                "total": round(float(r.total or 0), 2),
+                "foreign_buy": round(shares_to_lots(r.foreign_buy) or 0.0, 2),
+                "trust_buy": round(shares_to_lots(r.trust_buy) or 0.0, 2),
+                "dealer_buy": round(shares_to_lots(r.dealer_buy) or 0.0, 2),
+                "total": round(shares_to_lots(r.total) or 0.0, 2),
             }
             for r in rows
         ],

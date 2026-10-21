@@ -27,22 +27,22 @@ jobs:
           with engine.connect() as conn:
               r = conn.execute(
                   text(
-                      """SELECT MAX(date) FROM daily_chips
-                         WHERE stock_id = '0000' AND foreign_buy IS NOT NULL"""
+                      """SELECT MAX(date) FROM market_daily
+                         WHERE foreign_buy IS NOT NULL"""
                   )
               )
-              print("法人(大盤 0000):", r.scalar())
+              print("法人(大盤):", r.scalar())
               r = conn.execute(
                   text(
-                      """SELECT MAX(date) FROM daily_chips
-                         WHERE stock_id = '0000' AND tx_foreign_long IS NOT NULL"""
+                      """SELECT MAX(date) FROM market_daily
+                         WHERE tx_foreign_long IS NOT NULL"""
                   )
               )
               print("期貨OI(大盤):", r.scalar())
               r = conn.execute(
                   text(
-                      """SELECT MAX(date) FROM daily_chips
-                         WHERE stock_id = '0000' AND margin_long IS NOT NULL"""
+                      """SELECT MAX(date) FROM market_daily
+                         WHERE margin_long IS NOT NULL"""
                   )
               )
               print("融資券(大盤):", r.scalar())
