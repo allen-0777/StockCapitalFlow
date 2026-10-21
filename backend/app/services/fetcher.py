@@ -70,10 +70,11 @@ async def _get_json_with_retry(url: str, max_retries: int = 3) -> dict:
     for attempt in range(max_retries):
         try:
             return await _get_json(url)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            # ValueError：TWSE 限流時回 HTML 而非 JSON（JSONDecodeError），稍等再試
             if attempt == max_retries - 1:
                 raise
-            wait = 2 ** attempt
+            wait = 5 * 2 ** attempt
             print(f"[fetcher] retry {attempt + 1}/{max_retries - 1} after {wait}s: {e}")
             await asyncio.sleep(wait)
 

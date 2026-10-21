@@ -60,3 +60,12 @@ async def test_freshness_expects_previous_day_before_data_ready(hour, expected_a
         dt.now.return_value = fake_now
         assert await fetch_daily.run(["t"]) == 0
     ltd_mock.assert_called_once_with(expected_arg)
+
+
+@pytest.mark.asyncio
+async def test_twse_retries_non_json_throttle_page():
+    import json
+    calls = AsyncMock(side_effect=[json.JSONDecodeError("x", "<html>", 0), {"stat": "OK"}])
+    with patch.object(fetcher, "_get_json", calls), patch.object(fetcher.asyncio, "sleep", AsyncMock()) as sl:
+        assert await fetcher._get_json_with_retry("u") == {"stat": "OK"}
+    sl.assert_awaited_once_with(5)
