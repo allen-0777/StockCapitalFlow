@@ -34,8 +34,8 @@ The daily fetch runs directly on the GitHub Actions runner and writes to Supabas
 |---|---|---|
 | `institutional` | market-wide + per-stock institutional buy/sell, turnover | TWSE |
 | `futures` | futures OI by investor type, options OI / P/C ratio | TAIFEX CSV (OpenAPI fallback), FinMind |
-| `margin` | margin / short balances, USD/TWD rate | TWSE, FX source |
-| `industry` | stock → industry mapping, market series | FinMind / TWSE (runs on non-trading days too) |
+| `margin` | margin / short balances, USD/TWD rate (Bank of Taiwan rates) | TWSE, FinMind |
+| `industry` | stock → industry mapping, TAIEX / TPEx and industry series | FinMind (runs on non-trading days too) |
 
 Reliability features:
 
