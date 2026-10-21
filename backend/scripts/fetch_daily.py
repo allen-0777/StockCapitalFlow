@@ -15,7 +15,7 @@ import argparse
 import asyncio
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -37,6 +37,8 @@ JOBS: dict[str, list[str]] = {
     "industry":      ["sync_stock_industries", "sync_market_series_daily"],
 }
 
+DATA_READY_HOUR = 15  # 台北時間
+
 # industry 在非交易日也要跑（產業資料不依賴當日行情）
 TRADING_DAY_EXEMPT = {"industry"}
 
@@ -44,9 +46,11 @@ TRADING_DAY_EXEMPT = {"industry"}
 async def run(job_names: list[str], *, force: bool = False) -> int:
     """執行指定 job，回傳失敗數。force=True 時略過「非交易日跳過」（industry 本來就不跳過）。"""
     failures = 0
-    today = datetime.now(ZoneInfo("Asia/Taipei")).date()
+    now = datetime.now(ZoneInfo("Asia/Taipei"))
+    today = now.date()
     trading_today = is_trading_day(today)
-    expected = latest_trading_day(today)
+    # 盤後資料約 15:00 後才陸續公布；之前手動執行時以前一個交易日為預期日期
+    expected = latest_trading_day(today if now.hour >= DATA_READY_HOUR else today - timedelta(days=1))
     # force 補抓與非交易日手動執行不要求當日行情；例外仍算失敗。
     check_freshness = trading_today and not force
     stale = []

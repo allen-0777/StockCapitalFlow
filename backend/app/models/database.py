@@ -95,6 +95,10 @@ if _db_url:
         max_overflow=1,
         pool_pre_ping=True,   # 自動偵測並回收殭屍連線
         pool_recycle=300,     # 5 分鐘強制回收，避免 Supabase 踢掉閒置連線
+        # text() 的批次 upsert（T86 約 2 萬列）預設由 psycopg2 逐列送出，GitHub runner（美國）
+        # 到 Supabase（ap-south-1）每列一次往返 → 數小時；改用 execute_batch 每 500 列一次往返
+        executemany_mode="values_plus_batch",
+        executemany_batch_page_size=500,
     )
 else:
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
