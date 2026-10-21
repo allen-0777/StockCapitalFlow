@@ -6,6 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import aiohttp
@@ -13,8 +17,36 @@ import aiohttp
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 
 
-class FinMindQuotaError(Exception):
-    """FinMind 回傳 HTTP 402（配額用盡）。"""
+class FinMindAPIError(Exception):
+    def __init__(self, status, msg="", retry_after=0):
+        self.status = status
+        self.msg = msg
+        self.retry_after = retry_after
+        super().__init__(f"FinMind status={status}: {msg}")
+
+
+class FinMindQuotaError(FinMindAPIError):
+    """FinMind 配額用盡，不重試。"""
+
+    def __init__(self, status=402, msg="Quota exhausted"):
+        super().__init__(status, msg)
+
+
+_semaphore = asyncio.Semaphore(max(1, int(os.getenv("FINMIND_MAX_CONCURRENCY", "2"))))
+_rate_lock = asyncio.Lock()
+_min_interval = max(0.0, float(os.getenv("FINMIND_MIN_INTERVAL_S", "0.5")))
+_last_request = 0.0
+_sleep = asyncio.sleep
+
+
+def _retry_after(value):
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        try:
+            return max(0.0, (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
 
 
 _shared_session: aiohttp.ClientSession | None = None
@@ -52,7 +84,7 @@ async def finmind_get(
     """
     GET FinMind /api/v4/data。
     - token_in_query=True：參數帶 token（與舊版選擇權抓取一致）；否則使用 Authorization Bearer。
-    - 邏輯 status != 200 時回傳 []（與 concentration 行為一致）。
+    - 非 200 狀態拋 FinMindAPIError；暫時性錯誤最多嘗試三次。
     - 402 時拋 FinMindQuotaError。
     """
     token = os.getenv("FINMIND_TOKEN", "")
@@ -72,11 +104,35 @@ async def finmind_get(
 
     sess = session if session is not None else await get_shared_session()
     to = aiohttp.ClientTimeout(total=timeout)
-    async with sess.get(FINMIND_URL, params=params, headers=headers, timeout=to) as resp:
-        if resp.status == 402:
-            raise FinMindQuotaError()
-        resp.raise_for_status()
-        body = await resp.json(content_type=None)
-        if body.get("status") != 200:
-            return []
-        return body.get("data", [])
+    global _last_request
+    for attempt in range(3):
+        try:
+            async with _semaphore:
+                async with _rate_lock:
+                    delay = _min_interval - (time.monotonic() - _last_request)
+                    if delay > 0:
+                        await _sleep(delay)
+                    _last_request = time.monotonic()
+                async with sess.get(FINMIND_URL, params=params, headers=headers, timeout=to) as resp:
+                    retry_after = _retry_after(resp.headers.get("Retry-After"))
+                    if resp.status == 402:
+                        raise FinMindQuotaError(402, "Quota exhausted")
+                    if resp.status != 200:
+                        raise FinMindAPIError(resp.status, "HTTP error", retry_after)
+                    body = await resp.json(content_type=None)
+                    status = body.get("status")
+                    if status == 402:
+                        raise FinMindQuotaError(status, body.get("msg", ""))
+                    if status != 200:
+                        raise FinMindAPIError(status, body.get("msg", ""), retry_after)
+                    return body.get("data") or []
+        except FinMindQuotaError:
+            raise
+        except (FinMindAPIError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            if isinstance(exc, FinMindAPIError) and not (
+                exc.status == 429 or isinstance(exc.status, int) and 500 <= exc.status < 600
+            ):
+                raise
+            if attempt == 2:
+                raise
+            await _sleep(max(getattr(exc, "retry_after", 0), 2 ** attempt + random.uniform(0, 0.5)))

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
 from app.models.database import get_db
+from app.api.deps import require_api_key
 
 router = APIRouter()
 
@@ -48,7 +49,7 @@ def get_watchlist(user_id: int, db: Session = Depends(get_db)):
     ]
 
 
-@router.post("/api/v1/users/{user_id}/watchlist", status_code=201)
+@router.post("/api/v1/users/{user_id}/watchlist", status_code=201, dependencies=[Depends(require_api_key)])
 def add_watchlist(user_id: int, body: WatchlistAdd, db: Session = Depends(get_db)):
     existing = db.execute(
         text("SELECT id FROM watchlists WHERE user_id=:uid AND stock_id=:sid"),
@@ -65,7 +66,7 @@ def add_watchlist(user_id: int, body: WatchlistAdd, db: Session = Depends(get_db
     return {"message": "新增成功", "stock_id": body.stock_id}
 
 
-@router.delete("/api/v1/users/{user_id}/watchlist/{stock_id}", status_code=200)
+@router.delete("/api/v1/users/{user_id}/watchlist/{stock_id}", status_code=200, dependencies=[Depends(require_api_key)])
 def delete_watchlist(user_id: int, stock_id: str, db: Session = Depends(get_db)):
     db.execute(
         text("DELETE FROM watchlists WHERE user_id=:uid AND stock_id=:sid"),

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Search, TrendingUp, TrendingDown, Loader2 } from 'lucide-react'
+import { apiKeyHeaders } from '../apiHeaders'
 
 function FlowRow({ rank, item }) {
   const isBuy = item.net_shares >= 0
@@ -113,7 +114,7 @@ export default function Widget_BrokerFlow() {
         // 無資料，自動觸發抓取
         setLoading(false)
         setFetching(true)
-        const fetchRes = await fetch(`/api/v1/stocks/${sid}/broker/fetch`, { method: 'POST' })
+        const fetchRes = await fetch(`/api/v1/stocks/${sid}/broker/fetch`, { method: 'POST', headers: apiKeyHeaders })
         if (!fetchRes.ok) throw new Error('抓取失敗')
         setFetching(false)
         await loadData(sid)

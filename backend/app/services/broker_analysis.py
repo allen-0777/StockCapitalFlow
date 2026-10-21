@@ -51,7 +51,7 @@ def get_key_branches(db: Session, stock_id: str, lookforward: int = 5, days: int
             FROM broker_daily
             WHERE stock_id = :s AND date >= :d
             GROUP BY date, branch_id, branch_name
-            HAVING net > 0
+            HAVING SUM(buy_shares - sell_shares) > 0
         """),
         {"s": stock_id, "d": start_date}
     ).fetchall()

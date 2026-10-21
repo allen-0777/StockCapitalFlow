@@ -1,4 +1,4 @@
-# 每日 Telegram 彙整通知：喚醒 Render 後呼叫 /admin/trigger/daily-digest。
+# 每日 Telegram 彙整通知：喚醒 Render 後呼叫 /admin/daily-digest。
 # 分工說明：
 #   本檔（daily-fetch.yml）— 僅負責發送通知，不抓取資料、不寫入 DB
 #   fetch-direct.yml       — 資料抓取直寫 Supabase（不走 Render）
@@ -26,11 +26,8 @@ jobs:
       BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
       TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
     steps:
-      - name: Wake + Trigger + Poll
+      - name: Wake + Send Digest
         run: |
-          BACKEND_URL="${{ secrets.RENDER_BACKEND_URL }}"
-          TRIGGER_SECRET="${{ secrets.TRIGGER_SECRET }}"
-          
           echo "=== 1. Waking up backend ==="
           for j in $(seq 1 10); do
             SC=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_URL/api/v1/health") || SC="000"
@@ -41,35 +38,8 @@ jobs:
           
           echo ""
           echo "=== 2. Triggering job ==="
-          RESP=$(curl -sS --max-time 30 -X POST \
-            "$BACKEND_URL/api/v1/admin/trigger/daily-digest?secret=$TRIGGER_SECRET&notify=true") \
-            || RESP="{}"
-          echo "Trigger response: $RESP"
-          
-          STATUS=$(echo "$RESP" | python3 -c \
-            "import sys,json; print(json.load(sys.stdin).get('status','error'))" \
-            2>/dev/null || echo "error")
-          
-          [ "$STATUS" = "skipped" ] && echo "Non-trading day." && exit 0
-          [ "$STATUS" != "accepted" ] && echo "Unexpected status: $STATUS" && exit 1
-          
-          echo ""
-          echo "=== 3. Polling for completion ==="
-          for p in $(seq 1 60); do
-            sleep 15
-            POLL=$(curl -sS --max-time 15 \
-              "$BACKEND_URL/api/v1/admin/job-status/daily-digest?secret=$TRIGGER_SECRET") \
-              || POLL="{}"
-            PSTATUS=$(echo "$POLL" | python3 -c \
-              "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" \
-              2>/dev/null || echo "unknown")
-            echo "  poll $p/60: status=$PSTATUS"
-            
-            [ "$PSTATUS" = "running" ] || [ "$PSTATUS" = "accepted" ] || [ "$PSTATUS" = "unknown" ] && continue
-            [ "$PSTATUS" = "ok" ] && echo "Success!" && exit 0
-            echo "Job ended with status=$PSTATUS"
-            exit 1
-          done
-          echo "TIMEOUT: job did not complete in 15 minutes"
-          exit 1
-
+          RESP=$(curl --fail-with-body -sS --max-time 300 -X POST \
+            -H "X-Trigger-Secret: $TRIGGER_SECRET" \
+            "$BACKEND_URL/api/v1/admin/daily-digest") || exit 1
+          STATUS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','error'))")
+          [ "$STATUS" = "ok" ] || exit 1

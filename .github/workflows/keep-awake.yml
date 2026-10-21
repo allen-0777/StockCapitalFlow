@@ -1,5 +1,7 @@
-# 防止 Render 免費方案閒置休眠：每 5 小時 ping 一次 /api/v1/health。
-# 需要 secrets：RENDER_BACKEND_URL
+# 防止免費方案閒置休眠：
+#   - Supabase：直接對 DB 執行 `select 1`（免費專案 7 天無活動會自動暫停）
+#   - Render：ping /api/v1/health（此端點也會查 DB）；非 200 時 job 失敗，方便及早發現
+# 需要 secrets：DATABASE_URL（與 fetch-direct 相同）、RENDER_BACKEND_URL
 name: Keep Backend Awake
 
 on:
@@ -13,20 +15,30 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Ping backend
+      - name: Ping Supabase (select 1)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          BACKEND_URL="${{ secrets.RENDER_BACKEND_URL }}"
-          echo "Pinging $BACKEND_URL..."
-          
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          fi
+          # SQLAlchemy 風格的 postgresql+psycopg2:// 轉成 psql 可接受的 URI
+          URL="${DATABASE_URL/postgresql+psycopg2:\/\//postgresql://}"
+          psql "$URL" -v ON_ERROR_STOP=1 -tAc "select 1"
+
+      - name: Ping backend
+        if: always()
+        env:
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+        run: |
           for i in 1 2 3; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BACKEND_URL/api/v1/health" || echo "000")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$BACKEND_URL/api/v1/health" || echo "000")
             echo "Attempt $i: HTTP $STATUS"
             if [ "$STATUS" = "200" ]; then
               echo "Backend is awake!"
               exit 0
             fi
-            sleep 5
+            sleep 10
           done
-          
-          echo "Backend did not respond, but ping recorded."
-          exit 0
+          echo "::error::Backend health check did not return 200"
+          exit 1
