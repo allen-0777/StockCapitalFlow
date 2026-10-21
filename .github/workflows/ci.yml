@@ -11,3 +11,13 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - run: python -m pytest -q
         working-directory: backend
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 工作流程 YAML 壞掉時（例如排程因此不觸發）讓 CI 失敗
+      - name: Run actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color

@@ -50,19 +50,3 @@ jobs:
           FORCE_FLAG=""
           [ "$FETCH_FORCE" = "true" ] && FORCE_FLAG="--force"
           python backend/scripts/fetch_daily.py --jobs "$FETCH_JOBS" $FORCE_FLAG
-
-      # 失敗時推播 Telegram（需 secrets：TELEGRAM_BOT_TOKEN、TELEGRAM_CHAT_ID）
-      - name: Notify on failure
-        if: failure()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          MSG="❌ fetch-direct 失敗
-jobs: ${FETCH_JOBS:-all}
-$RUN_URL"
-          curl -sS -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-            --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
-            --data-urlencode "text=$MSG" \
-            > /dev/null
