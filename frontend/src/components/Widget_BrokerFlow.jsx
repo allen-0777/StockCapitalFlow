@@ -15,13 +15,13 @@ function FlowRow({ rank, item }) {
         <div className="text-xs text-slate-400">{item.branch_id}</div>
       </div>
       <div className="text-xs text-slate-400 mx-3 hidden sm:block tabular-nums">
-        <span className="text-red-400">買 {item.buy_shares.toLocaleString()}</span>
+        <span className="text-red-400">買 {item.buy_shares.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
         <span className="mx-1 text-slate-300">/</span>
-        <span className="text-green-500">賣 {item.sell_shares.toLocaleString()}</span>
+        <span className="text-green-500">賣 {item.sell_shares.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
       </div>
       <div className={`ml-auto flex items-center font-bold text-sm shrink-0 tabular-nums ${isBuy ? 'text-red-500' : 'text-green-500'}`}>
         {isBuy ? <TrendingUp size={13} className="mr-1 shrink-0" /> : <TrendingDown size={13} className="mr-1 shrink-0" />}
-        {isBuy ? `+${item.net_shares.toLocaleString()}` : item.net_shares.toLocaleString()}
+        {isBuy ? `+${item.net_shares.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : item.net_shares.toLocaleString(undefined, { maximumFractionDigits: 0 })}
       </div>
     </div>
   )

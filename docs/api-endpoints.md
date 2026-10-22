@@ -262,3 +262,31 @@ PUT /api/v1/users/{user_id}/notifications
 
 用途：讓使用者綁定 Telegram Chat ID 或 Discord Webhook URL。
 Payload: { "notify_token": "telegram_chat_id_or_discord_webhook" }
+
+
+3.7 券商分點 (Broker)
+
+GET `/api/v1/stocks/{stock_id}/broker/flow?days=30`
+
+回傳 `stock_id`、`stock_name`、`days`、`date_range`（`from` / `to`）及 `branches`。
+各分點含 `branch_id`、`branch_name`、`buy_shares`、`sell_shares`、`net_shares`。
+三個數量欄位均為張（1 張 = 1000 股），可有小數；保留既有欄位名稱。
+依區間淨買超絕對值排序，最多 20 筆。
+
+GET `/api/v1/stocks/{stock_id}/broker/keypoints?lookforward=5&days=90`
+
+回傳 `stock_id`、`stock_name`、`lookforward_days`、`backtest_period_days` 及 `branches`。
+各分點含 `branch_id`、`branch_name`、`buy_count`（有效買超回測次數）、
+`win_rate`（0–1 比例）、`avg_return`（報酬率比例）、`score`（勝率 × 平均報酬 × 100）
+及 `recent_net`（最近 30 日淨買超，單位張，可有小數）。依分數排序，最多 20 筆。
+
+POST `/api/v1/stocks/{stock_id}/broker/fetch`
+
+抓取分點與股價，回傳 `status`、`stock_id`、`broker_rows`、`price_rows`；
+後兩者為資料筆數，不是股數或張數。設定 `API_KEY` 時須提供 `X-API-Key`。
+
+FinMind `TaiwanStockTradingDailyReport` 的 `buy` / `sell` 單位為股；
+`broker_daily.buy_shares` / `sell_shares` 保留原始整數股數。分析、篩選與排序在股數上完成，
+僅於 API 回應以 `shares_to_lots()` 除以 1000，不修改資料庫。
+例如儲存買進 1,234,000 股，`buy_shares` 回傳 `1234.0`，元件直接顯示 1,234 張。
+股價（元）、勝率、報酬率、分數與次數不換算；前端不可再次除以 1000。

@@ -50,7 +50,7 @@ TWSE requests use its main-site JSON APIs, not the obsolete TWSE OpenAPI fund ro
 - Margin fields are **changes**, calculated as today's minus previous balance: `margin_long` is 千元; `margin_short` is 張. The market API divides the former by **100000** for `long_yi` and returns the latter as `short_zhang`.
 - Futures OI is integer contracts (口). Despite their names, `mtx_retail_long` and `mtx_retail_short` store MTX foreign-investor OI in the current fetcher.
 - Options foreign net values convert TAIFEX 千元 to 億元 by dividing by **100000**; `pc_ratio` is put OI / call OI × 100 (percent).
-- Broker buy/sell values are stored and returned as integer shares without conversion. The broker widget currently labels these 張; inspect this mismatch before changes.
+- Broker FinMind buy/sell values are stored as integer shares (股). Analysis stays in shares; the API converts flow `buy_shares`, `sell_shares`, `net_shares` and keypoints `recent_net` to 張 with `shares_to_lots()` (÷1000), retaining legacy field names. The widget displays lots directly. Prices, ratios, scores, and counts are unchanged.
 - Concentration institutional responses retain FinMind shares; their widget converts to 張 with `/1000`. Preserve these endpoint-specific unit contracts.
 
 ## Deployment and configuration
