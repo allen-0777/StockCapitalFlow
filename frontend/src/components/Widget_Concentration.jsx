@@ -116,7 +116,7 @@ function ShareholdingChart({ data }) {
 
 export default function Widget_Concentration() {
   const [inputVal, setInputVal]   = useState('')
-  const [stockLabel, setStockLabel] = useState('')  // "2408 南亞科"
+  const [, setStockLabel] = useState('')  // "2408 南亞科"
   const [suggestions, setSuggestions] = useState([])
   const [data, setData]           = useState(null)
   const [loading, setLoading]     = useState(false)

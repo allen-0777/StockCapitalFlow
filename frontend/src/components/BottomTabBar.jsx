@@ -16,7 +16,8 @@ export default function BottomTabBar() {
 
   return (
     <nav className="fixed bottom-0 inset-x-0 z-50 h-16 bg-white/95 backdrop-blur-lg border-t border-slate-200/80 flex items-stretch safe-bottom lg:hidden">
-      {tabs.map(({ id, icon: Icon, label }) => {
+      {tabs.map(({ id, icon, label }) => {
+        const Icon = icon
         const active = activeTab === id
         return (
           <button

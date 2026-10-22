@@ -116,6 +116,7 @@ export default function Widget5_Options({ refreshNonce = 0 }) {
 
   useEffect(() => {
     let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Preserve loading timing at request start and existing overlapping-request behavior.
     setLoading(true)
     fetch('/api/v1/market/options')
       .then((r) => (r.ok ? r.json() : null))

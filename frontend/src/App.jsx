@@ -28,7 +28,9 @@ export default function App() {
     try {
       const res = await fetch('/api/v1/market/summary')
       if (res.ok) setMarketData(await res.json())
-    } catch {}
+    } catch {
+      // Keep the current data when a refresh fails.
+    }
   }, [])
 
   const fetchWatchlist = useCallback(async () => {
@@ -39,7 +41,9 @@ export default function App() {
         setWatchlistLocal(data)
         setWatchlist(data)
       }
-    } catch {}
+    } catch {
+      // Keep the current data when a refresh fails.
+    }
   }, [setWatchlist])
 
   const handleRefresh = useCallback(() => {
@@ -56,6 +60,7 @@ export default function App() {
   }, [setActiveTab])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Setters run after awaited fetch responses; preserve mount request timing.
     fetchMarket()
     fetchWatchlist()
   }, [fetchMarket, fetchWatchlist])

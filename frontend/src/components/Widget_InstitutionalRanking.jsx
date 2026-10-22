@@ -73,6 +73,7 @@ export default function Widget_InstitutionalRanking() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Preserve loading timing at request start and existing overlapping-request behavior.
     setLoading(true)
     fetch(`/api/v1/institutional/ranking?type=${type}&order=${order}&limit=20`)
       .then(r => r.json())
