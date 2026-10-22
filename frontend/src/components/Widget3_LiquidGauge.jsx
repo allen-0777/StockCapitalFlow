@@ -2,6 +2,28 @@ import { useState, useRef, useEffect } from 'react'
 import { Info } from 'lucide-react'
 
 export default function Widget3_LiquidGauge({ data }) {
+  const dateMismatch =
+    data?.institutional_date &&
+    data?.margin_date &&
+    data?.institutional_date !== data?.margin_date
+
+  const [infoOpen, setInfoOpen] = useState(false)
+  const infoAnchorRef = useRef(null)
+
+  useEffect(() => {
+    if (!dateMismatch || !infoOpen) return
+
+    const onPointerDown = (e) => {
+      const el = infoAnchorRef.current
+      if (el && !el.contains(e.target)) {
+        setInfoOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [dateMismatch, infoOpen])
+
   if (!data) {
     return (
       <div className="glass-card rounded-[2rem] p-6 flex items-center justify-center">
@@ -33,28 +55,6 @@ export default function Widget3_LiquidGauge({ data }) {
     const wan = v / 10000
     return `${v >= 0 ? '+' : ''}${wan.toFixed(1)}萬張`
   }
-
-  const dateMismatch =
-    data.institutional_date &&
-    data.margin_date &&
-    data.institutional_date !== data.margin_date
-
-  const [infoOpen, setInfoOpen] = useState(false)
-  const infoAnchorRef = useRef(null)
-
-  useEffect(() => {
-    if (!dateMismatch || !infoOpen) return
-
-    const onPointerDown = (e) => {
-      const el = infoAnchorRef.current
-      if (el && !el.contains(e.target)) {
-        setInfoOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', onPointerDown, true)
-    return () => document.removeEventListener('pointerdown', onPointerDown, true)
-  }, [dateMismatch, infoOpen])
 
   const titleBlock = (
     <div

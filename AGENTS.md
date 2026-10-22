@@ -82,7 +82,7 @@ Cron expressions below are UTC; Taiwan is UTC+8. Render disables its scheduler; 
 
 | File in `.github/workflows/` | Active triggers | Purpose |
 | --- | --- | --- |
-| `ci.yml` | `push`, `pull_request` | Python 3.11 backend pytest and actionlint |
+| `ci.yml` | `push`, `pull_request` | Python 3.11 backend pytest, frontend lint/build, and actionlint |
 | `fetch-direct.yml` | `30 9 * * 1-5`; `workflow_dispatch` | Weekdays 17:30 Taiwan: runner ETL directly into Supabase, independent of Render |
 | `daily-fetch.yml` | `0 14 * * *`; `workflow_dispatch` | Daily 22:00 Taiwan: wake Render and POST `/api/v1/admin/daily-digest`; notification only |
 | `keep-awake.yml` | `0 */5 * * *`; `workflow_dispatch` | Supabase `select 1` and backend health ping |
@@ -133,7 +133,7 @@ npm run lint
 npm run build
 ```
 
-`npm ci` uses the existing `package-lock.json` without rewriting it; prefer it over `npm install`. `npm run lint` currently fails on main with 10 pre-existing ESLint errors (`react-hooks/rules-of-hooks`, `react-hooks/set-state-in-effect`, `no-unused-vars`) and is not run in CI. Do not introduce new lint errors in files you touch or attribute the pre-existing errors to your change. `npm run build` passes on main. `npm run dev` starts Vite; `npm run preview` previews its build; no frontend test script exists. For behavior changes, add/adjust tests in `backend/tests/` and run relevant checks. Keep `docs/api-endpoints.md` synchronized when changing API responses and units.
+`npm ci` uses the existing `package-lock.json` without rewriting it; prefer it over `npm install`. `npm run lint` and `npm run build` pass and run in CI. `npm run dev` starts Vite; `npm run preview` previews its build; no frontend test script exists. For behavior changes, add/adjust tests in `backend/tests/` and run relevant checks. Keep `docs/api-endpoints.md` synchronized when changing API responses and units.
 
 ## Change rules
 
