@@ -15,14 +15,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from dotenv import load_dotenv
-load_dotenv()
-
-from app.models.database import SessionLocal, init_db
-from app.services.zheng2_radar import run_zheng2_radar
-
-
 async def main() -> None:
+    try:
+        from app.services.zheng2_radar import run_zheng2_radar
+    except ModuleNotFoundError as exc:
+        if exc.name != "app.services.zheng2_radar":
+            raise
+        print(
+            "Zheng2 radar unavailable: app.services.zheng2_radar is missing; "
+            "no implementation exists in repository history. Push aborted.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
+
+    from dotenv import load_dotenv
+    load_dotenv()
+    from app.models.database import SessionLocal, init_db
+
     init_db()
     with SessionLocal() as db:
         await run_zheng2_radar(db)

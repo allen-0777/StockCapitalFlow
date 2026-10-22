@@ -25,7 +25,7 @@ def test_workflows_and_pins():
     assert '"ok"' in digest
     radar = (root / '.github/workflows/zheng2-radar.yml').read_text()
     assert '\n  schedule:' not in radar and 'workflow_dispatch:' in radar
-    assert 'zheng2_radar.py is restored' in radar
+    assert 'zheng2_radar.py was never committed' in radar
     for name in ('fetch-direct', 'zheng2-radar', 'ci'):
         workflow = (root / f'.github/workflows/{name}.yml').read_text()
         assert 'pip install -r backend/requirements.txt' in workflow

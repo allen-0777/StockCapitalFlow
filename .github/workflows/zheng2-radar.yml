@@ -1,14 +1,15 @@
 # 正二雷達推播：讀取 Supabase DB 計算訊號並發 Telegram，不抓外部 API。
 # 分工說明：
 #   fetch-direct.yml  — 資料抓取寫入 DB（UTC 09:30，CST 17:30）
-#   本檔             — 讀 DB 推播（UTC 10:10，CST 18:10，約晚 40 分鐘）
+#   本檔             — 手動入口；缺少雷達實作，目前會明確失敗
 #   daily-fetch.yml  — 每日 Telegram 彙整通知（UTC 14:00，CST 22:00）
 # 需要 secrets：DATABASE_URL、TELEGRAM_BOT_TOKEN、TELEGRAM_CHAT_ID
 # 不需要 FINMIND_TOKEN（僅讀 DB）
 name: Zheng2 Radar Push
 
 on:
-  # Schedule disabled until backend/app/services/zheng2_radar.py is restored.
+  # Manual-only: backend/app/services/zheng2_radar.py was never committed.
+  # The script fails clearly until a radar implementation is provided.
   workflow_dispatch: {}   # 手動補推播用
 
 jobs:

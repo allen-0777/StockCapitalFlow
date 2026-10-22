@@ -12,7 +12,7 @@ LiquidChip (籌碼流動) tracks Taiwan institutional flows, margin, futures/opt
 - `backend/app/models/database.py`: ORM tables, sessions, schema guard, unit helper, and TTL cache (in memory, or Redis when configured).
 - `backend/scripts/fetch_daily.py`: daily ETL CLI used directly by GitHub Actions.
 - `backend/scripts/probe_market_api_dates.py`: external API date probe.
-- `backend/scripts/zheng2_push.py`: radar push entry point; its imported `app.services.zheng2_radar` module is currently absent.
+- `backend/scripts/zheng2_push.py`: radar push entry point; exits non-zero with an explicit error before environment/DB setup when `app.services.zheng2_radar` is missing. No radar implementation was committed in available history.
 - `backend/tests/`: pytest coverage for ingestion, schema/units, admin, notifications, rotation, authentication, and repository fixes.
 - `backend/migrations/`: slim-schema migration, rollback, and destructive cleanup SQL.
 - `frontend/src/`: `App.jsx`, dashboard `components/`, Zustand `store/useStore.js`, `apiHeaders.js`, styles, and assets.
@@ -88,14 +88,14 @@ Cron expressions below are UTC; Taiwan is UTC+8. Render disables its scheduler; 
 | `keep-awake.yml` | `0 */5 * * *`; `workflow_dispatch` | Supabase `select 1` and backend health ping |
 | `check-status.yml` | `workflow_dispatch` only | Query latest dataset dates and industry mapping count |
 | `db-status.yml` | `workflow_dispatch` only | Same DB status checks as `check-status.yml` |
-| `zheng2-radar.yml` | `workflow_dispatch` only | Radar push script; schedule disabled until missing radar service is restored |
+| `zheng2-radar.yml` | `workflow_dispatch` only | Radar push script; fails clearly because the radar service was never committed; schedule remains disabled |
 
 `fetch-direct.yml` defines these exact dispatch inputs (neither declares `required`):
 
 - `jobs`: `type: string`, `default: 'all'`, description `'Jobs to run (逗號分隔，或 all)'`.
 - `force`: `type: boolean`, `default: false`, description `'非交易日也執行（補資料用）'`.
 
-The runner passes inputs through `FETCH_JOBS` and `FETCH_FORCE`, not inline shell code. `jobs` accepts `all` or comma-separated `institutional`, `futures`, `margin`, `industry`. `institutional` runs market/T86/turnover; `futures` runs futures/options; `margin` runs margin/FX; `industry` runs mapping/market series. Industry is exempt from the CLI's non-trading-day skip. `--force` bypasses that skip and freshness enforcement; it still writes source dates, not arbitrary historical dates. Normal trading-day runs fail on missing/stale dates or exceptions. `daily-fetch.yml` has a required choice input `job`, default and sole option `daily-digest`. Do not mistake the commented radar timing for an active cron schedule.
+The runner passes inputs through `FETCH_JOBS` and `FETCH_FORCE`, not inline shell code. `jobs` accepts `all` or comma-separated `institutional`, `futures`, `margin`, `industry`. `institutional` runs market/T86/turnover; `futures` runs futures/options; `margin` runs margin/FX; `industry` runs mapping/market series. Industry is exempt from the CLI's non-trading-day skip. `--force` bypasses that skip and freshness enforcement; it still writes source dates, not arbitrary historical dates. Normal trading-day runs fail on missing/stale dates or exceptions. `daily-fetch.yml` has a required choice input `job`, default and sole option `daily-digest`. The radar workflow has no active cron schedule. History audit: `f689876` added only its workflow and script; the module path has no commits or deletion record in `git log --all`. `9784910` disabled scheduling; README and docs contain no radar implementation reference.
 
 A past Telegram notification-step edit broke workflow YAML and scheduled runs silently stopped. Validate every workflow edit **before committing**. CI also runs actionlint. From the repo root, download and run actionlint v1.7.7 as CI does (do not commit the downloaded binary):
 
