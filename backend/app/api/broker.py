@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from app.models.database import get_db
+from app.models.database import get_db, shares_to_lots
 from app.services.finmind_fetcher import fetch_broker_daily, fetch_stock_price
 from app.services.broker_analysis import get_recent_flow, get_key_branches
 from app.api.deps import require_api_key
@@ -30,7 +30,12 @@ def _date_range(db: Session, stock_id: str, days: int) -> dict:
 @router.get("/api/v1/stocks/{stock_id}/broker/flow")
 def broker_flow(stock_id: str, days: int = 30, db: Session = Depends(get_db)):
     """近 N 日各分點買賣超排行"""
-    branches = get_recent_flow(db, stock_id, days)
+    # Analysis stays in shares; only response quantities are converted to 張.
+    branches = [
+        {**b, **{k: shares_to_lots(b[k])
+                 for k in ("buy_shares", "sell_shares", "net_shares")}}
+        for b in get_recent_flow(db, stock_id, days)
+    ]
     return {
         "stock_id":   stock_id,
         "stock_name": _stock_name(db, stock_id),
@@ -44,7 +49,10 @@ def broker_flow(stock_id: str, days: int = 30, db: Session = Depends(get_db)):
 def broker_keypoints(stock_id: str, lookforward: int = 5, days: int = 90,
                      db: Session = Depends(get_db)):
     """關鍵分點回測結果"""
-    branches = get_key_branches(db, stock_id, lookforward, days)
+    branches = [
+        {**b, "recent_net": shares_to_lots(b["recent_net"])}
+        for b in get_key_branches(db, stock_id, lookforward, days)
+    ]
     return {
         "stock_id":             stock_id,
         "stock_name":           _stock_name(db, stock_id),
